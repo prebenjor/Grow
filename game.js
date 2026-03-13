@@ -23,7 +23,12 @@ const drawerPearlsLabel = document.getElementById("drawerPearlsLabel");
 const drawerRoomLabel = document.getElementById("drawerRoomLabel");
 const toast = document.getElementById("toast");
 
-const PROFILE_KEY = "grow-profile";
+const PROFILE_CACHE_KEY = "grow-profile-cache";
+const LEGACY_PROFILE_KEY = "grow-profile";
+const MIGRATION_KEY_PREFIX = "grow-migrated:";
+const CLIENT_ID = localStorage.getItem("grow-client-id") || crypto.randomUUID();
+
+localStorage.setItem("grow-client-id", CLIENT_ID);
 
 const state = {
   token: localStorage.getItem("grow-token") || "",
@@ -39,14 +44,14 @@ const state = {
   keys: new Set(),
   camera: { x: 0, y: 0, zoom: 1 },
   lastFrame: performance.now(),
-  pendingState: false,
-  pendingInput: false,
-  pendingLoadout: false,
   speciesRenderKey: "",
   toastTimer: null,
   unlockPanelOpen: window.innerWidth > 980,
-  lastSelfScore: 0,
-  runPearlsGranted: 0
+  socket: null,
+  reconnectTimer: null,
+  reconnectAttempts: 0,
+  lastInputKey: "",
+  socketReady: false
 };
 
 function createDefaultProfile() {
@@ -62,9 +67,10 @@ function createDefaultProfile() {
   };
 }
 
-function loadProfile() {
+function loadCachedProfile() {
   try {
-    const parsed = JSON.parse(localStorage.getItem(PROFILE_KEY) || "");
+    const cached = localStorage.getItem(PROFILE_CACHE_KEY) || localStorage.getItem(LEGACY_PROFILE_KEY) || "";
+    const parsed = JSON.parse(cached);
     return {
       ...createDefaultProfile(),
       ...parsed,
@@ -78,12 +84,28 @@ function loadProfile() {
   }
 }
 
-state.profile = loadProfile();
+function loadLegacyProfile() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(LEGACY_PROFILE_KEY) || "");
+    return {
+      ...createDefaultProfile(),
+      ...parsed,
+      unlockedSpecies: Array.isArray(parsed.unlockedSpecies) ? parsed.unlockedSpecies : ["sprout"],
+      ownedVariants: parsed.ownedVariants && typeof parsed.ownedVariants === "object" ? parsed.ownedVariants : {},
+      selectedVariants: parsed.selectedVariants && typeof parsed.selectedVariants === "object" ? parsed.selectedVariants : {},
+      upgrades: parsed.upgrades && typeof parsed.upgrades === "object" ? parsed.upgrades : {}
+    };
+  } catch (error) {
+    return null;
+  }
+}
+
+state.profile = loadCachedProfile();
 nameInput.value = state.profile.name;
 roomInput.value = state.roomId;
 
-function saveProfile() {
-  localStorage.setItem(PROFILE_KEY, JSON.stringify(state.profile));
+function saveProfileCache() {
+  localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(state.profile));
 }
 
 function resize() {
@@ -139,7 +161,16 @@ function clamp(value, min, max) {
 }
 
 function getSpecies(speciesId) {
-  return state.species.find((entry) => entry.id === speciesId) || state.species[0];
+  return (
+    state.species.find((entry) => entry.id === speciesId) ||
+    state.species[0] || {
+      id: "sprout",
+      label: "Sprout Fry",
+      color: "#f6c555",
+      accent: "#fff0b7",
+      variants: [{ id: "sprout-native", label: "Sprout Fry Native", rarity: "common", color: "#f6c555", accent: "#fff0b7" }]
+    }
+  );
 }
 
 function getRarity(rarityId) {
@@ -185,14 +216,31 @@ function normalizeProfileAgainstConfig() {
   }
 
   if (changed) {
-    saveProfile();
+    saveProfileCache();
   }
+}
+
+function applyProfile(profile) {
+  state.profile = {
+    ...createDefaultProfile(),
+    ...profile,
+    unlockedSpecies: Array.isArray(profile?.unlockedSpecies) ? profile.unlockedSpecies : ["sprout"],
+    ownedVariants: profile?.ownedVariants && typeof profile.ownedVariants === "object" ? profile.ownedVariants : {},
+    selectedVariants: profile?.selectedVariants && typeof profile.selectedVariants === "object" ? profile.selectedVariants : {},
+    upgrades: profile?.upgrades && typeof profile.upgrades === "object" ? profile.upgrades : {}
+  };
+  nameInput.value = state.profile.name;
+  normalizeProfileAgainstConfig();
+  saveProfileCache();
+  renderSpeciesCards(true);
+  updateHud();
 }
 
 function getSelectedVariant(speciesId) {
   const species = getSpecies(speciesId);
-  const variantId = state.profile.selectedVariants[speciesId] || species.variants[0].id;
-  return species.variants.find((variant) => variant.id === variantId) || species.variants[0];
+  const variants = Array.isArray(species.variants) && species.variants.length ? species.variants : [getSpecies("sprout").variants[0]];
+  const variantId = state.profile.selectedVariants[speciesId] || variants[0].id;
+  return variants.find((variant) => variant.id === variantId) || variants[0];
 }
 
 function getUpgradeLevel(speciesId) {
@@ -203,8 +251,7 @@ function currentLoadout() {
   const speciesId = state.profile.selectedSpecies;
   return {
     speciesId,
-    variantId: getSelectedVariant(speciesId).id,
-    upgradeLevel: getUpgradeLevel(speciesId)
+    variantId: getSelectedVariant(speciesId).id
   };
 }
 
@@ -230,6 +277,48 @@ async function loadConfig() {
   normalizeProfileAgainstConfig();
 }
 
+async function bootstrapProfile() {
+  if (!state.token) {
+    return;
+  }
+
+  try {
+    const payload = await request(`/api/profile?token=${encodeURIComponent(state.token)}`);
+    applyProfile(payload.profile);
+  } catch (error) {
+    localStorage.removeItem("grow-token");
+    state.token = "";
+  }
+}
+
+async function migrateLegacyProfileIfNeeded() {
+  if (!state.token) {
+    return;
+  }
+
+  const markerKey = `${MIGRATION_KEY_PREFIX}${state.token}`;
+  if (localStorage.getItem(markerKey) === "1") {
+    return;
+  }
+
+  const legacy = loadLegacyProfile();
+  if (!legacy) {
+    localStorage.setItem(markerKey, "1");
+    return;
+  }
+
+  const payload = await request("/api/profile/migrate", {
+    method: "POST",
+    body: JSON.stringify({
+      token: state.token,
+      profile: legacy
+    })
+  });
+
+  localStorage.setItem(markerKey, "1");
+  applyProfile(payload.profile);
+}
+
 function variantDiscoveryCost(species) {
   return 12 + Math.floor(species.unlockScore / 18);
 }
@@ -238,114 +327,125 @@ function upgradeCost(species, currentLevel) {
   return 18 + currentLevel * 26 + Math.floor(species.unlockScore / 12);
 }
 
-function rollLockedVariant(species) {
-  const owned = new Set(state.profile.ownedVariants[species.id] || []);
-  const lockedVariants = species.variants.filter((variant) => !owned.has(variant.id));
-  if (!lockedVariants.length) {
+async function profileAction(action, speciesId, variantId) {
+  if (!state.token) {
+    showToast("Join a room first");
     return null;
   }
 
-  const totalWeight = lockedVariants.reduce((sum, variant) => sum + getRarity(variant.rarity).weight, 0);
-  let roll = Math.random() * totalWeight;
+  const payload = await request("/api/profile", {
+    method: "POST",
+    body: JSON.stringify({
+      token: state.token,
+      action,
+      speciesId,
+      variantId,
+      clientId: CLIENT_ID
+    })
+  });
 
-  for (const variant of lockedVariants) {
-    roll -= getRarity(variant.rarity).weight;
-    if (roll <= 0) {
-      return variant;
-    }
+  if (payload.profile) {
+    applyProfile(payload.profile);
   }
 
-  return lockedVariants[lockedVariants.length - 1];
+  if (payload.message) {
+    showToast(payload.message);
+  }
+
+  return payload;
 }
 
-function awardRunPearls(self) {
-  if (!self) {
-    return;
-  }
-
-  if (!self.alive || self.score < state.lastSelfScore) {
-    state.runPearlsGranted = 0;
-  }
-
-  const totalEarnedThisRun = Math.floor(self.score / 12);
-  const delta = totalEarnedThisRun - state.runPearlsGranted;
-  if (delta > 0) {
-    state.profile.pearls += delta;
-    state.runPearlsGranted = totalEarnedThisRun;
-    saveProfile();
-  }
-
-  state.lastSelfScore = self.score;
+function socketUrl() {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${protocol}//${window.location.host}/ws?token=${encodeURIComponent(state.token)}`;
 }
 
-function updateUnlockProgress() {
-  const self = state.snapshot?.self;
-  if (!self) {
-    return;
-  }
-
-  const previousPearls = state.profile.pearls;
-  awardRunPearls(self);
-
-  const previousBest = state.profile.bestScore;
-  const previousUnlocks = new Set(state.profile.unlockedSpecies);
-
-  state.profile.bestScore = Math.max(state.profile.bestScore, self.bestScore || self.score || 0);
-
-  for (const species of state.species) {
-    if (state.profile.bestScore >= species.unlockScore && !state.profile.unlockedSpecies.includes(species.id)) {
-      state.profile.unlockedSpecies.push(species.id);
-    }
-  }
-
-  if (!state.profile.unlockedSpecies.includes(state.profile.selectedSpecies)) {
-    state.profile.selectedSpecies = "sprout";
-  }
-
-  if (
-    previousPearls !== state.profile.pearls ||
-    previousBest !== state.profile.bestScore ||
-    previousUnlocks.size !== state.profile.unlockedSpecies.length
-  ) {
-    saveProfile();
-    renderSpeciesCards(true);
-    for (const speciesId of state.profile.unlockedSpecies) {
-      if (!previousUnlocks.has(speciesId)) {
-        showToast(`Unlocked ${getSpecies(speciesId).label}`);
-      }
-    }
+function sendSocket(payload) {
+  if (state.socket?.readyState === WebSocket.OPEN) {
+    state.socket.send(JSON.stringify(payload));
   }
 }
 
-async function syncLoadout() {
-  if (!state.connected || state.pendingLoadout) {
+function scheduleReconnect() {
+  if (state.reconnectTimer || !state.token || !state.roomId) {
     return;
   }
 
-  state.pendingLoadout = true;
+  const delay = Math.min(5000, 800 + state.reconnectAttempts * 500);
+  state.reconnectTimer = setTimeout(() => {
+    state.reconnectTimer = null;
+    state.reconnectAttempts += 1;
+    openSocket();
+  }, delay);
+}
+
+function handleSocketMessage(raw) {
+  let payload;
   try {
-    const loadout = currentLoadout();
-    await request("/api/loadout", {
-      method: "POST",
-      body: JSON.stringify({
-        token: state.token,
-        ...loadout
-      })
-    });
-    if (state.snapshot?.self) {
-      state.snapshot.self.speciesId = loadout.speciesId;
-      state.snapshot.self.variantId = loadout.variantId;
-      state.snapshot.self.upgradeLevel = loadout.upgradeLevel;
-      const variant = getSelectedVariant(loadout.speciesId);
-      state.snapshot.self.color = variant.color;
-      state.snapshot.self.accent = variant.accent;
-      state.snapshot.self.rarity = variant.rarity;
-    }
+    payload = JSON.parse(raw);
   } catch (error) {
-    showToast(error.message);
-  } finally {
-    state.pendingLoadout = false;
+    return;
   }
+
+  if (payload.type === "ready") {
+    state.socketReady = true;
+    state.connected = true;
+    state.reconnectAttempts = 0;
+    sendInput(true);
+    return;
+  }
+
+  if (payload.type === "snapshot") {
+    state.snapshot = payload.snapshot;
+    updateHud();
+    return;
+  }
+
+  if (payload.type === "profile") {
+    applyProfile(payload.profile);
+    return;
+  }
+
+  if (payload.type === "event" && payload.message) {
+    showToast(payload.message);
+  }
+}
+
+function openSocket() {
+  if (!state.token) {
+    return;
+  }
+
+  if (state.socket && [WebSocket.OPEN, WebSocket.CONNECTING].includes(state.socket.readyState)) {
+    return;
+  }
+
+  statusLabel.textContent = "Connecting";
+  const socket = new WebSocket(socketUrl());
+  state.socket = socket;
+  state.socketReady = false;
+
+  socket.addEventListener("open", () => {
+    statusLabel.textContent = `Room ${state.roomId}`;
+  });
+
+  socket.addEventListener("message", (event) => {
+    handleSocketMessage(event.data);
+  });
+
+  socket.addEventListener("close", () => {
+    if (state.socket === socket) {
+      state.socket = null;
+      state.socketReady = false;
+      state.connected = false;
+      statusLabel.textContent = "Reconnecting";
+      scheduleReconnect();
+    }
+  });
+
+  socket.addEventListener("error", () => {
+    statusLabel.textContent = "Connection error";
+  });
 }
 
 function renderSpeciesCards(force = false) {
@@ -427,12 +527,8 @@ function renderSpeciesCards(force = false) {
         if (!state.profile.unlockedSpecies.includes(speciesId)) {
           return;
         }
-        state.profile.selectedSpecies = speciesId;
-        saveProfile();
-        renderSpeciesCards(true);
+        await profileAction("selectSpecies", speciesId, getSelectedVariant(speciesId).id);
         setUnlockPanelOpen(false);
-        await syncLoadout();
-        showToast(`${species.label} selected`);
         return;
       }
 
@@ -441,15 +537,7 @@ function renderSpeciesCards(force = false) {
         if (!(state.profile.ownedVariants[speciesId] || []).includes(variantId)) {
           return;
         }
-        state.profile.selectedVariants[speciesId] = variantId;
-        if (state.profile.selectedSpecies === speciesId) {
-          saveProfile();
-          renderSpeciesCards(true);
-          await syncLoadout();
-        } else {
-          saveProfile();
-          renderSpeciesCards(true);
-        }
+        await profileAction("selectVariant", speciesId, variantId);
         return;
       }
 
@@ -459,14 +547,7 @@ function renderSpeciesCards(force = false) {
         if (currentLevel >= state.maxUpgradeLevel || state.profile.pearls < cost) {
           return;
         }
-        state.profile.pearls -= cost;
-        state.profile.upgrades[speciesId] = currentLevel + 1;
-        saveProfile();
-        renderSpeciesCards(true);
-        if (state.profile.selectedSpecies === speciesId) {
-          await syncLoadout();
-        }
-        showToast(`${species.label} upgraded to Lv.${currentLevel + 1}`);
+        await profileAction("upgradeSpecies", speciesId);
         return;
       }
 
@@ -475,20 +556,7 @@ function renderSpeciesCards(force = false) {
         if (state.profile.pearls < cost) {
           return;
         }
-        const found = rollLockedVariant(species);
-        if (!found) {
-          showToast("All variants already collected");
-          return;
-        }
-        state.profile.pearls -= cost;
-        state.profile.ownedVariants[speciesId].push(found.id);
-        state.profile.selectedVariants[speciesId] = found.id;
-        saveProfile();
-        renderSpeciesCards(true);
-        if (state.profile.selectedSpecies === speciesId) {
-          await syncLoadout();
-        }
-        showToast(`Found ${found.label} (${getRarity(found.rarity).label})`);
+        await profileAction("scoutVariant", speciesId);
       }
     });
   });
@@ -508,15 +576,13 @@ async function connect(name, roomId) {
 
   state.token = payload.token;
   state.roomId = payload.roomId;
-  state.connected = true;
   state.species = payload.species;
   state.rarities = payload.rarities;
   state.maxUpgradeLevel = payload.maxUpgradeLevel;
 
   localStorage.setItem("grow-token", state.token);
-  state.profile.name = name;
-  saveProfile();
-  normalizeProfileAgainstConfig();
+  applyProfile(payload.profile);
+  await migrateLegacyProfileIfNeeded();
 
   joinPanel.classList.add("hidden");
   hudPanel.classList.remove("hidden");
@@ -526,23 +592,24 @@ async function connect(name, roomId) {
   updateShareLink(state.roomId, payload.shareUrl);
   renderSpeciesCards(true);
   setUnlockPanelOpen(window.innerWidth > 980);
+  openSocket();
   showToast("Joined the room.");
 }
 
 function updateHud() {
   const self = state.snapshot?.self;
+  pearlsLabel.textContent = String(state.profile.pearls);
+  bestLabel.textContent = String(state.profile.bestScore);
+  drawerPearlsLabel.textContent = String(state.profile.pearls);
+  drawerRoomLabel.textContent = state.roomId || "solo";
   if (!self) {
     return;
   }
 
   speciesLabel.textContent = getSpecies(self.speciesId).label;
   massLabel.textContent = String(Math.round(self.mass));
-  pearlsLabel.textContent = String(state.profile.pearls);
-  bestLabel.textContent = String(state.profile.bestScore);
   streakLabel.textContent = String(self.streak);
-  statusLabel.textContent = self.alive ? `Room ${state.roomId} • ${state.snapshot.roomPopulation} online` : "Respawning";
-  drawerPearlsLabel.textContent = String(state.profile.pearls);
-  drawerRoomLabel.textContent = state.roomId;
+  statusLabel.textContent = self.alive ? `Room ${state.roomId} - ${state.snapshot.roomPopulation} online` : "Respawning";
 
   leaderboardList.innerHTML = "";
   for (const entry of state.snapshot.leaderboard || []) {
@@ -575,45 +642,24 @@ function currentInput() {
   };
 }
 
-async function pollState() {
-  if (!state.connected || state.pendingState) {
+function sendInput(force = false) {
+  if (!state.socketReady) {
     return;
   }
 
-  state.pendingState = true;
-  try {
-    state.snapshot = await request(`/api/state?token=${encodeURIComponent(state.token)}`);
-    updateUnlockProgress();
-    updateHud();
-  } catch (error) {
-    statusLabel.textContent = "Disconnected";
-  } finally {
-    state.pendingState = false;
-  }
-}
-
-async function sendInput() {
-  if (!state.connected || state.pendingInput) {
+  const input = currentInput();
+  const inputKey = `${input.x.toFixed(3)}:${input.y.toFixed(3)}:${input.boost ? 1 : 0}`;
+  if (!force && inputKey === state.lastInputKey) {
     return;
   }
 
-  state.pendingInput = true;
-  try {
-    const input = currentInput();
-    await request("/api/input", {
-      method: "POST",
-      body: JSON.stringify({
-        token: state.token,
-        x: input.x,
-        y: input.y,
-        boost: input.boost
-      })
-    });
-  } catch (error) {
-    statusLabel.textContent = "Connection lost";
-  } finally {
-    state.pendingInput = false;
-  }
+  state.lastInputKey = inputKey;
+  sendSocket({
+    type: "input",
+    x: input.x,
+    y: input.y,
+    boost: input.boost
+  });
 }
 
 function drawBackground() {
@@ -754,7 +800,7 @@ function drawOverlay(self) {
   ctx.font = '700 36px "Impact", "Haettenschweiler", "Arial Narrow Bold", sans-serif';
   ctx.fillText("You got eaten", window.innerWidth / 2, window.innerHeight / 2 - 12);
   ctx.font = '500 18px "Bahnschrift", "Trebuchet MS", sans-serif';
-  ctx.fillText(`Defeated by ${self.defeatedBy || "a larger fish"} • respawn in ${seconds}s`, window.innerWidth / 2, window.innerHeight / 2 + 22);
+  ctx.fillText(`Defeated by ${self.defeatedBy || "a larger fish"} - respawn in ${seconds}s`, window.innerWidth / 2, window.innerHeight / 2 + 22);
   ctx.restore();
 }
 
@@ -842,6 +888,7 @@ window.addEventListener("resize", () => {
 
 Promise.resolve()
   .then(loadConfig)
+  .then(bootstrapProfile)
   .then(() => {
     renderSpeciesCards(true);
     if (state.roomId) {
@@ -854,7 +901,11 @@ Promise.resolve()
   .finally(() => {
     resize();
     setUnlockPanelOpen(window.innerWidth > 980);
-    setInterval(pollState, 120);
-    setInterval(sendInput, 80);
+    setInterval(() => sendInput(false), 70);
+    setInterval(() => {
+      if (state.socketReady) {
+        sendSocket({ type: "ping" });
+      }
+    }, 10000);
     requestAnimationFrame(renderFrame);
   });

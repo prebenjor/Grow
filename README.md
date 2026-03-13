@@ -1,10 +1,11 @@
 # Grow
 
-Real multiplayer fish growth game with room links.
+Real multiplayer fish growth game with room links, a WebSocket game loop, and server-owned progression.
 
 ## Run locally
 
 ```bash
+npm install
 npm start
 ```
 
@@ -12,10 +13,17 @@ Then open `http://localhost:3000`.
 
 ## Deploy
 
-This version needs a Node host because the game state lives on the server.
+This version needs a Node host because both the game state and player progression live on the server.
 
-- `Render`: the repo includes `render.yaml` for a basic web service setup
+- `Render`: use a `Web Service` or the included `render.yaml`
 - `Railway` / `Fly.io` / any other Node host: run `npm start`
+
+### Render notes
+
+- Health check path: `/healthz`
+- Build command: `npm install`
+- Start command: `npm start`
+- For persistent progression across redeploys, mount a persistent disk and set `DATA_DIR` to that mounted path
 
 ## Controls
 
@@ -25,6 +33,7 @@ This version needs a Node host because the game state lives on the server.
 ## Notes
 
 - Share `/?room=your-room-id` so another player joins the same ocean.
-- Earn pearls while swimming, scout rarity-based fish variants, and upgrade each species up to level 5.
-- Unlocks are stored in `localStorage`.
-- GitHub Pages can still serve the static files, but real shared multiplayer requires the Node server.
+- The live game runs over WebSockets with an authoritative Node simulation.
+- Pearls, variants, upgrades, and best score are stored server-side in `profiles.json` or the directory configured by `DATA_DIR`.
+- A one-time migration imports the old local `grow-profile` cache the first time a returning player joins.
+- GitHub Pages can still serve static files, but real shared multiplayer requires the Node server.
