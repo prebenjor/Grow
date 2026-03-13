@@ -14,10 +14,9 @@
     <div class="layout">
       <section class="panel hero" id="joinPanel">
         <p class="eyebrow">Grow</p>
-        <h1>Eat smaller fish. Get huge.</h1>
+        <h1>Eat smaller fish. Build a rare collection.</h1>
         <p class="subtitle">
-          This build uses a real multiplayer server. Share the room link and another player can join the same ocean from
-          their own browser.
+          Join a room, grow by eating, earn pearls, discover rare fish variations, and upgrade your favorites.
         </p>
         <form id="joinForm">
           <label>
@@ -37,6 +36,7 @@
         <div class="stats">
           <div><span class="label">Fish</span><strong id="speciesLabel">Sprout Fry</strong></div>
           <div><span class="label">Mass</span><strong id="massLabel">24</strong></div>
+          <div><span class="label">Pearls</span><strong id="pearlsLabel">0</strong></div>
           <div><span class="label">Best</span><strong id="bestLabel">0</strong></div>
           <div><span class="label">Streak</span><strong id="streakLabel">0</strong></div>
         </div>
@@ -61,12 +61,22 @@
       <aside class="panel unlocks hidden" id="unlockPanel">
         <div class="unlocks-header">
           <div>
-            <p class="eyebrow">Unlocks</p>
-            <h2>Choose your fish</h2>
+            <p class="eyebrow">Collection</p>
+            <h2>Fish Lab</h2>
           </div>
           <button class="close-button" id="closeUnlocksButton" type="button">Close</button>
         </div>
-        <p class="hint unlocks-hint">Pick a fish, then close this drawer and keep swimming.</p>
+        <div class="collection-strip">
+          <div>
+            <span class="label">Pearls bank</span>
+            <strong id="drawerPearlsLabel">0</strong>
+          </div>
+          <div>
+            <span class="label">Room</span>
+            <strong id="drawerRoomLabel">ocean</strong>
+          </div>
+        </div>
+        <p class="hint unlocks-hint">Discover variants with rarity rolls, then upgrade the fish you actually use.</p>
         <div class="species-grid" id="speciesGrid"></div>
       </aside>
     </div>

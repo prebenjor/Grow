@@ -9,6 +9,11 @@
   --accent: #f6c555;
   --accent-2: #6ae9d0;
   --shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
+  --common: #d9e4ee;
+  --uncommon: #67e8a8;
+  --rare: #67b6ff;
+  --epic: #d28bff;
+  --legendary: #ffcf66;
 }
 
 * {
@@ -76,7 +81,7 @@ body::after {
 
 .hero,
 .hud {
-  max-width: 430px;
+  max-width: 460px;
 }
 
 .hero {
@@ -100,7 +105,7 @@ body::after {
 
 .subtitle {
   margin: 14px 0 22px;
-  max-width: 28rem;
+  max-width: 30rem;
   line-height: 1.45;
 }
 
@@ -132,7 +137,6 @@ label {
 
 label span {
   font-size: 0.85rem;
-  color: var(--muted);
 }
 
 input {
@@ -182,13 +186,14 @@ button {
 
 .stats {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 12px;
 }
 
 .stats div,
 .leaderboard,
-.share {
+.share,
+.collection-strip {
   padding: 12px 14px;
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.05);
@@ -201,12 +206,18 @@ button {
 }
 
 .stats strong,
-.leaderboard strong {
-  font-size: 1.1rem;
+.leaderboard strong,
+.collection-strip strong {
+  font-size: 1.05rem;
 }
 
 .leaderboard-header,
-.unlocks-header {
+.unlocks-header,
+.card-header,
+.card-meta,
+.card-actions,
+.variant-toolbar,
+.collection-strip {
   display: flex;
   justify-content: space-between;
   gap: 12px;
@@ -238,7 +249,7 @@ button {
   position: fixed;
   top: 20px;
   right: 20px;
-  width: min(420px, calc(100vw - 40px));
+  width: min(460px, calc(100vw - 40px));
   max-height: calc(100vh - 40px);
   overflow: auto;
   padding: 20px;
@@ -254,6 +265,10 @@ body.unlocks-open .unlocks {
   margin: 12px 0 18px;
 }
 
+.collection-strip {
+  margin-top: 12px;
+}
+
 .species-grid {
   display: grid;
   gap: 12px;
@@ -265,7 +280,7 @@ body.unlocks-open .unlocks {
   border: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(255, 255, 255, 0.05);
   display: grid;
-  gap: 8px;
+  gap: 10px;
 }
 
 .species-card.selected {
@@ -277,14 +292,6 @@ body.unlocks-open .unlocks {
   opacity: 0.58;
 }
 
-.species-card header,
-.species-meta {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  align-items: center;
-}
-
 .species-swatch {
   width: 18px;
   height: 18px;
@@ -294,15 +301,77 @@ body.unlocks-open .unlocks {
   box-shadow: 0 0 16px currentColor;
 }
 
-.species-card button {
-  width: 100%;
-  padding: 10px 14px;
+.variant-badge {
+  padding: 4px 8px;
+  border-radius: 999px;
+  font-size: 0.74rem;
+  font-weight: 800;
+  color: #102131;
 }
 
-.species-card button[disabled] {
+.variant-badge.common {
+  background: var(--common);
+}
+
+.variant-badge.uncommon {
+  background: var(--uncommon);
+}
+
+.variant-badge.rare {
+  background: var(--rare);
+}
+
+.variant-badge.epic {
+  background: var(--epic);
+}
+
+.variant-badge.legendary {
+  background: var(--legendary);
+}
+
+.card-actions {
+  flex-wrap: wrap;
+}
+
+.card-actions button {
+  flex: 1 1 120px;
+  min-height: 42px;
+  padding: 10px 12px;
+}
+
+.card-actions button[disabled] {
   background: rgba(255, 255, 255, 0.1);
   color: rgba(255, 255, 255, 0.65);
   cursor: not-allowed;
+}
+
+.variant-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.variant-chip {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+  padding: 8px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.variant-chip.selected {
+  border-color: rgba(255, 221, 107, 0.7);
+}
+
+.variant-chip span {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  display: inline-block;
 }
 
 .toast {
@@ -336,6 +405,6 @@ body.unlocks-open .unlocks {
   .unlocks {
     top: auto;
     bottom: 20px;
-    max-height: min(70vh, 620px);
+    max-height: min(72vh, 660px);
   }
 }

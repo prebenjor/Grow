@@ -25,5 +25,6 @@ This version needs a Node host because the game state lives on the server.
 ## Notes
 
 - Share `/?room=your-room-id` so another player joins the same ocean.
+- Earn pearls while swimming, scout rarity-based fish variants, and upgrade each species up to level 5.
 - Unlocks are stored in `localStorage`.
 - GitHub Pages can still serve the static files, but real shared multiplayer requires the Node server.

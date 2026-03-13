@@ -15,8 +15,25 @@ const MAX_BOTS = 22;
 const PLAYER_TIMEOUT_MS = 15000;
 const RESPAWN_DELAY_MS = 2400;
 const ROOM_IDLE_MS = 120000;
+const MAX_UPGRADE_LEVEL = 5;
 
-const SPECIES = [
+const RARITIES = {
+  common: { id: "common", label: "Common", weight: 58, ring: "#d9e4ee" },
+  uncommon: { id: "uncommon", label: "Uncommon", weight: 25, ring: "#67e8a8" },
+  rare: { id: "rare", label: "Rare", weight: 11, ring: "#67b6ff" },
+  epic: { id: "epic", label: "Epic", weight: 5, ring: "#d28bff" },
+  legendary: { id: "legendary", label: "Legendary", weight: 1, ring: "#ffcf66" }
+};
+
+const variantTemplates = [
+  { key: "native", label: "Native", rarity: "common", useBase: true },
+  { key: "reef", label: "Reef Bloom", rarity: "uncommon", color: "#ff7f6b", accent: "#ffd7c7" },
+  { key: "tide", label: "Tideglass", rarity: "rare", color: "#54c8ff", accent: "#d9f5ff" },
+  { key: "nova", label: "Nova", rarity: "epic", color: "#c96cff", accent: "#f5d8ff" },
+  { key: "sunforged", label: "Sunforged", rarity: "legendary", color: "#ffb545", accent: "#fff0a8" }
+];
+
+const rawSpecies = [
   { id: "sprout", label: "Sprout Fry", unlockScore: 0, color: "#f6c555", accent: "#fff0b7", speed: 202, accel: 430, boostCost: 0.08 },
   { id: "dartfin", label: "Dartfin", unlockScore: 90, color: "#ff8a5b", accent: "#ffd6bb", speed: 220, accel: 465, boostCost: 0.095 },
   { id: "reefglider", label: "Reef Glider", unlockScore: 220, color: "#3ec7c2", accent: "#cbfffb", speed: 190, accel: 418, boostCost: 0.072 },
@@ -24,7 +41,19 @@ const SPECIES = [
   { id: "abyssal", label: "Abyssal Hunter", unlockScore: 650, color: "#9f7cff", accent: "#f0e8ff", speed: 208, accel: 440, boostCost: 0.1 }
 ];
 
+const SPECIES = rawSpecies.map((species) => ({
+  ...species,
+  variants: variantTemplates.map((variant) => ({
+    id: `${species.id}-${variant.key}`,
+    label: variant.useBase ? `${species.label} Native` : `${species.label} ${variant.label}`,
+    rarity: variant.rarity,
+    color: variant.useBase ? species.color : variant.color,
+    accent: variant.useBase ? species.accent : variant.accent
+  }))
+}));
+
 const speciesById = Object.fromEntries(SPECIES.map((entry) => [entry.id, entry]));
+const rarityList = Object.values(RARITIES);
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
@@ -114,6 +143,25 @@ function sanitizeRoomId(value) {
   return roomId || "ocean";
 }
 
+function variantForSpecies(species, variantId) {
+  return species.variants.find((variant) => variant.id === variantId) || species.variants[0];
+}
+
+function startingMassFor(player) {
+  return START_MASS + player.upgradeLevel * 2;
+}
+
+function applyLoadout(player, speciesId, variantId, upgradeLevel) {
+  const species = speciesById[speciesId] || speciesById.sprout;
+  const variant = variantForSpecies(species, variantId);
+  player.speciesId = species.id;
+  player.variantId = variant.id;
+  player.color = variant.color;
+  player.accent = variant.accent;
+  player.rarity = variant.rarity;
+  player.upgradeLevel = clamp(Number(upgradeLevel) || 0, 0, MAX_UPGRADE_LEVEL);
+}
+
 function speciesForMass(mass) {
   if (mass > 180) return speciesById.abyssal;
   if (mass > 120) return speciesById.puffer;
@@ -137,6 +185,7 @@ function createFood(room) {
 function createBot(room) {
   const mass = random(18, 190);
   const species = speciesForMass(mass);
+  const variant = species.variants[Math.floor(random(0, Math.min(3, species.variants.length)))];
   return {
     id: `b${room.nextBotId++}`,
     name: ["Nib", "Reef", "Glint", "Snap", "Ripple", "Drift"][Math.floor(Math.random() * 6)],
@@ -152,6 +201,11 @@ function createBot(room) {
     radius: massToRadius(mass),
     score: Math.max(0, mass - START_MASS),
     speciesId: species.id,
+    variantId: variant.id,
+    color: variant.color,
+    accent: variant.accent,
+    rarity: variant.rarity,
+    upgradeLevel: 0,
     wanderAt: 0
   };
 }
@@ -181,8 +235,8 @@ function getRoom(roomId) {
   return rooms.get(roomId) || createRoom(roomId);
 }
 
-function createPlayer(token, roomId, name, speciesId) {
-  return {
+function createPlayer(token, roomId, name, loadout) {
+  const player = {
     token,
     roomId,
     name: sanitizeName(name),
@@ -197,13 +251,23 @@ function createPlayer(token, roomId, name, speciesId) {
     radius: massToRadius(START_MASS),
     score: 0,
     bestScore: 0,
-    speciesId: speciesById[speciesId] ? speciesId : "sprout",
+    speciesId: "sprout",
+    variantId: "sprout-native",
+    color: speciesById.sprout.color,
+    accent: speciesById.sprout.accent,
+    rarity: "common",
+    upgradeLevel: 0,
     alive: true,
     respawnAt: 0,
     defeatedBy: "",
     streak: 0,
     lastSeen: Date.now()
   };
+
+  applyLoadout(player, loadout.speciesId, loadout.variantId, loadout.upgradeLevel);
+  player.mass = startingMassFor(player);
+  player.radius = massToRadius(player.mass);
+  return player;
 }
 
 function movePlayerToRoom(player, nextRoomId) {
@@ -225,9 +289,9 @@ function getMoveStats(entity) {
   const species = speciesById[entity.speciesId] || speciesById.sprout;
   const sizePenalty = clamp((entity.mass - START_MASS) * 0.18, 0, 125);
   return {
-    maxSpeed: Math.max(78, species.speed - sizePenalty),
-    accel: species.accel,
-    boostCost: species.boostCost
+    maxSpeed: Math.max(78, species.speed + entity.upgradeLevel * 4 - sizePenalty),
+    accel: species.accel + entity.upgradeLevel * 10,
+    boostCost: Math.max(0.03, species.boostCost - entity.upgradeLevel * 0.004)
   };
 }
 
@@ -238,11 +302,11 @@ function applyMovement(entity, dt) {
   entity.vx += desired.x * stats.accel * dt;
   entity.vy += desired.y * stats.accel * dt;
 
-  if (entity.boosting && entity.mass > START_MASS + 5) {
+  if (entity.boosting && entity.mass > startingMassFor(entity) + 5) {
     entity.vx += desired.x * stats.accel * 0.8 * dt;
     entity.vy += desired.y * stats.accel * 0.8 * dt;
-    entity.mass = Math.max(START_MASS, entity.mass - stats.boostCost);
-    entity.score = Math.max(0, entity.mass - START_MASS);
+    entity.mass = Math.max(startingMassFor(entity), entity.mass - stats.boostCost);
+    entity.score = Math.max(0, entity.mass - startingMassFor(entity));
     entity.radius = massToRadius(entity.mass);
   }
 
@@ -263,7 +327,7 @@ function applyMovement(entity, dt) {
 
 function grow(entity, amount) {
   entity.mass += amount;
-  entity.score = Math.max(entity.score, entity.mass - START_MASS);
+  entity.score = Math.max(entity.score, entity.mass - startingMassFor(entity));
   entity.radius = massToRadius(entity.mass);
   entity.bestScore = Math.max(entity.bestScore, Math.floor(entity.score));
 }
@@ -276,8 +340,8 @@ function respawnPlayer(player) {
   player.inputX = 0;
   player.inputY = 0;
   player.boosting = false;
-  player.mass = START_MASS;
-  player.radius = massToRadius(START_MASS);
+  player.mass = startingMassFor(player);
+  player.radius = massToRadius(player.mass);
   player.score = 0;
   player.alive = true;
   player.respawnAt = 0;
@@ -422,8 +486,27 @@ function leaderboard(room) {
     .map((player) => ({
       name: player.name,
       score: Math.floor(player.score),
-      speciesId: player.speciesId
+      speciesId: player.speciesId,
+      rarity: player.rarity
     }));
+}
+
+function serializeEntity(entity) {
+  return {
+    name: entity.name,
+    x: entity.x,
+    y: entity.y,
+    vx: entity.vx,
+    vy: entity.vy,
+    radius: entity.radius,
+    mass: entity.mass,
+    speciesId: entity.speciesId,
+    variantId: entity.variantId,
+    color: entity.color,
+    accent: entity.accent,
+    rarity: entity.rarity,
+    upgradeLevel: entity.upgradeLevel
+  };
 }
 
 function snapshotFor(player) {
@@ -437,47 +520,26 @@ function snapshotFor(player) {
     world: WORLD,
     self: {
       token: player.token,
-      name: player.name,
-      x: player.x,
-      y: player.y,
-      vx: player.vx,
-      vy: player.vy,
-      mass: player.mass,
-      radius: player.radius,
+      ...serializeEntity(player),
       score: Math.floor(player.score),
       bestScore: Math.floor(player.bestScore),
       alive: player.alive,
       respawnAt: player.respawnAt,
       defeatedBy: player.defeatedBy,
-      streak: player.streak,
-      speciesId: player.speciesId
+      streak: player.streak
     },
     players: [...room.players.values()]
       .filter((entry) => entry.token !== player.token && entry.alive && isNearby(entry))
       .map((entry) => ({
         token: entry.token,
-        name: entry.name,
-        x: entry.x,
-        y: entry.y,
-        vx: entry.vx,
-        vy: entry.vy,
-        radius: entry.radius,
-        score: Math.floor(entry.score),
-        mass: entry.mass,
-        speciesId: entry.speciesId
+        ...serializeEntity(entry),
+        score: Math.floor(entry.score)
       })),
     bots: room.bots
       .filter((entry) => isNearby(entry))
       .map((entry) => ({
         id: entry.id,
-        name: entry.name,
-        x: entry.x,
-        y: entry.y,
-        vx: entry.vx,
-        vy: entry.vy,
-        radius: entry.radius,
-        mass: entry.mass,
-        speciesId: entry.speciesId
+        ...serializeEntity(entry)
       })),
     foods: room.foods
       .filter((entry) => isNearby(entry))
@@ -488,7 +550,8 @@ function snapshotFor(player) {
         radius: entry.radius,
         color: entry.color
       })),
-    leaderboard: leaderboard(room)
+    leaderboard: leaderboard(room),
+    roomPopulation: room.players.size
   };
 }
 
@@ -522,7 +585,9 @@ async function handleRequest(req, res) {
   if (req.method === "GET" && url.pathname === "/api/config") {
     sendJson(res, 200, {
       world: WORLD,
-      species: SPECIES
+      species: SPECIES,
+      rarities: rarityList,
+      maxUpgradeLevel: MAX_UPGRADE_LEVEL
     });
     return;
   }
@@ -532,14 +597,18 @@ async function handleRequest(req, res) {
       const body = await readBody(req);
       const roomId = sanitizeRoomId(body.roomId);
       const name = sanitizeName(body.name);
-      const requestedSpecies = speciesById[body.speciesId] ? body.speciesId : "sprout";
+      const loadout = {
+        speciesId: body.speciesId,
+        variantId: body.variantId,
+        upgradeLevel: body.upgradeLevel
+      };
 
       let token = typeof body.token === "string" ? body.token : "";
       let player = token ? playerSessions.get(token) : null;
 
       if (!player) {
         token = crypto.randomUUID();
-        player = createPlayer(token, roomId, name, requestedSpecies);
+        player = createPlayer(token, roomId, name, loadout);
         playerSessions.set(token, player);
       }
 
@@ -548,7 +617,7 @@ async function handleRequest(req, res) {
       }
 
       player.name = name;
-      player.speciesId = requestedSpecies;
+      applyLoadout(player, loadout.speciesId, loadout.variantId, loadout.upgradeLevel);
       player.lastSeen = Date.now();
       getRoom(roomId).players.set(token, player);
 
@@ -557,7 +626,9 @@ async function handleRequest(req, res) {
         token,
         roomId,
         shareUrl,
-        species: SPECIES
+        species: SPECIES,
+        rarities: rarityList,
+        maxUpgradeLevel: MAX_UPGRADE_LEVEL
       });
     } catch (error) {
       sendJson(res, 400, { error: error.message });
@@ -585,7 +656,7 @@ async function handleRequest(req, res) {
     return;
   }
 
-  if (req.method === "POST" && url.pathname === "/api/select-species") {
+  if (req.method === "POST" && url.pathname === "/api/loadout") {
     try {
       const body = await readBody(req);
       const player = playerSessions.get(body.token);
@@ -594,14 +665,14 @@ async function handleRequest(req, res) {
         return;
       }
 
-      if (!speciesById[body.speciesId]) {
-        sendJson(res, 404, { error: "Species not found" });
-        return;
-      }
-
-      player.speciesId = body.speciesId;
+      applyLoadout(player, body.speciesId, body.variantId, body.upgradeLevel);
       player.lastSeen = Date.now();
-      sendJson(res, 200, { ok: true, speciesId: body.speciesId });
+      sendJson(res, 200, {
+        ok: true,
+        speciesId: player.speciesId,
+        variantId: player.variantId,
+        upgradeLevel: player.upgradeLevel
+      });
     } catch (error) {
       sendJson(res, 400, { error: error.message });
     }

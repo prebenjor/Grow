@@ -15,9 +15,12 @@ const speciesGrid = document.getElementById("speciesGrid");
 const leaderboardList = document.getElementById("leaderboardList");
 const speciesLabel = document.getElementById("speciesLabel");
 const massLabel = document.getElementById("massLabel");
+const pearlsLabel = document.getElementById("pearlsLabel");
 const bestLabel = document.getElementById("bestLabel");
 const streakLabel = document.getElementById("streakLabel");
 const statusLabel = document.getElementById("statusLabel");
+const drawerPearlsLabel = document.getElementById("drawerPearlsLabel");
+const drawerRoomLabel = document.getElementById("drawerRoomLabel");
 const toast = document.getElementById("toast");
 
 const PROFILE_KEY = "grow-profile";
@@ -29,39 +32,55 @@ const state = {
   connected: false,
   config: null,
   species: [],
-  profile: loadProfile(),
+  rarities: [],
+  maxUpgradeLevel: 5,
+  profile: createDefaultProfile(),
   pointer: { x: 0, y: 0, active: false },
   keys: new Set(),
   camera: { x: 0, y: 0, zoom: 1 },
   lastFrame: performance.now(),
   pendingState: false,
   pendingInput: false,
+  pendingLoadout: false,
   speciesRenderKey: "",
   toastTimer: null,
-  unlockPanelOpen: window.innerWidth > 980
+  unlockPanelOpen: window.innerWidth > 980,
+  lastSelfScore: 0,
+  runPearlsGranted: 0
 };
 
-nameInput.value = state.profile.name;
-roomInput.value = state.roomId;
+function createDefaultProfile() {
+  return {
+    name: "",
+    bestScore: 0,
+    pearls: 0,
+    unlockedSpecies: ["sprout"],
+    selectedSpecies: "sprout",
+    ownedVariants: {},
+    selectedVariants: {},
+    upgrades: {}
+  };
+}
 
 function loadProfile() {
   try {
     const parsed = JSON.parse(localStorage.getItem(PROFILE_KEY) || "");
     return {
-      name: parsed.name || "",
-      bestScore: parsed.bestScore || 0,
+      ...createDefaultProfile(),
+      ...parsed,
       unlockedSpecies: Array.isArray(parsed.unlockedSpecies) ? parsed.unlockedSpecies : ["sprout"],
-      selectedSpecies: parsed.selectedSpecies || "sprout"
+      ownedVariants: parsed.ownedVariants && typeof parsed.ownedVariants === "object" ? parsed.ownedVariants : {},
+      selectedVariants: parsed.selectedVariants && typeof parsed.selectedVariants === "object" ? parsed.selectedVariants : {},
+      upgrades: parsed.upgrades && typeof parsed.upgrades === "object" ? parsed.upgrades : {}
     };
   } catch (error) {
-    return {
-      name: "",
-      bestScore: 0,
-      unlockedSpecies: ["sprout"],
-      selectedSpecies: "sprout"
-    };
+    return createDefaultProfile();
   }
 }
+
+state.profile = loadProfile();
+nameInput.value = state.profile.name;
+roomInput.value = state.roomId;
 
 function saveProfile() {
   localStorage.setItem(PROFILE_KEY, JSON.stringify(state.profile));
@@ -119,16 +138,140 @@ function getSpecies(speciesId) {
   return state.species.find((entry) => entry.id === speciesId) || state.species[0];
 }
 
-function updateShareLink(roomId) {
+function getRarity(rarityId) {
+  return state.rarities.find((entry) => entry.id === rarityId) || { id: "common", label: "Common", ring: "#d9e4ee", weight: 1 };
+}
+
+function normalizeProfileAgainstConfig() {
+  if (!state.species.length) {
+    return;
+  }
+
+  let changed = false;
+
+  for (const species of state.species) {
+    const baseVariant = species.variants[0];
+    const owned = Array.isArray(state.profile.ownedVariants[species.id]) ? [...state.profile.ownedVariants[species.id]] : [];
+    if (!owned.includes(baseVariant.id)) {
+      owned.unshift(baseVariant.id);
+      changed = true;
+    }
+    state.profile.ownedVariants[species.id] = [...new Set(owned)];
+
+    if (!state.profile.selectedVariants[species.id] || !state.profile.ownedVariants[species.id].includes(state.profile.selectedVariants[species.id])) {
+      state.profile.selectedVariants[species.id] = baseVariant.id;
+      changed = true;
+    }
+
+    const upgradeLevel = clamp(Number(state.profile.upgrades[species.id]) || 0, 0, state.maxUpgradeLevel);
+    if (state.profile.upgrades[species.id] !== upgradeLevel) {
+      state.profile.upgrades[species.id] = upgradeLevel;
+      changed = true;
+    }
+  }
+
+  if (!state.profile.unlockedSpecies.includes("sprout")) {
+    state.profile.unlockedSpecies.unshift("sprout");
+    changed = true;
+  }
+
+  if (!state.profile.unlockedSpecies.includes(state.profile.selectedSpecies)) {
+    state.profile.selectedSpecies = "sprout";
+    changed = true;
+  }
+
+  if (changed) {
+    saveProfile();
+  }
+}
+
+function getSelectedVariant(speciesId) {
+  const species = getSpecies(speciesId);
+  const variantId = state.profile.selectedVariants[speciesId] || species.variants[0].id;
+  return species.variants.find((variant) => variant.id === variantId) || species.variants[0];
+}
+
+function getUpgradeLevel(speciesId) {
+  return clamp(Number(state.profile.upgrades[speciesId]) || 0, 0, state.maxUpgradeLevel);
+}
+
+function currentLoadout() {
+  const speciesId = state.profile.selectedSpecies;
+  return {
+    speciesId,
+    variantId: getSelectedVariant(speciesId).id,
+    upgradeLevel: getUpgradeLevel(speciesId)
+  };
+}
+
+function updateShareLink(roomId, explicitShareUrl) {
+  if (explicitShareUrl) {
+    shareInput.value = explicitShareUrl;
+  } else {
+    const url = new URL(window.location.href);
+    url.searchParams.set("room", roomId);
+    shareInput.value = url.toString();
+  }
+
   const url = new URL(window.location.href);
   url.searchParams.set("room", roomId);
   history.replaceState({}, "", `${url.pathname}?${url.searchParams.toString()}`);
-  shareInput.value = url.toString();
 }
 
 async function loadConfig() {
   state.config = await request("/api/config");
   state.species = state.config.species;
+  state.rarities = state.config.rarities;
+  state.maxUpgradeLevel = state.config.maxUpgradeLevel;
+  normalizeProfileAgainstConfig();
+}
+
+function variantDiscoveryCost(species) {
+  return 12 + Math.floor(species.unlockScore / 18);
+}
+
+function upgradeCost(species, currentLevel) {
+  return 18 + currentLevel * 26 + Math.floor(species.unlockScore / 12);
+}
+
+function rollLockedVariant(species) {
+  const owned = new Set(state.profile.ownedVariants[species.id] || []);
+  const lockedVariants = species.variants.filter((variant) => !owned.has(variant.id));
+  if (!lockedVariants.length) {
+    return null;
+  }
+
+  const totalWeight = lockedVariants.reduce((sum, variant) => sum + getRarity(variant.rarity).weight, 0);
+  let roll = Math.random() * totalWeight;
+
+  for (const variant of lockedVariants) {
+    roll -= getRarity(variant.rarity).weight;
+    if (roll <= 0) {
+      return variant;
+    }
+  }
+
+  return lockedVariants[lockedVariants.length - 1];
+}
+
+function awardRunPearls(self) {
+  if (!self) {
+    return;
+  }
+
+  if (!self.alive || self.score < state.lastSelfScore) {
+    state.runPearlsGranted = 0;
+  }
+
+  const totalEarnedThisRun = Math.floor(self.score / 12);
+  const delta = totalEarnedThisRun - state.runPearlsGranted;
+  if (delta > 0) {
+    state.profile.pearls += delta;
+    state.runPearlsGranted = totalEarnedThisRun;
+    saveProfile();
+  }
+
+  state.lastSelfScore = self.score;
 }
 
 function updateUnlockProgress() {
@@ -136,6 +279,9 @@ function updateUnlockProgress() {
   if (!self) {
     return;
   }
+
+  const previousPearls = state.profile.pearls;
+  awardRunPearls(self);
 
   const previousBest = state.profile.bestScore;
   const previousUnlocks = new Set(state.profile.unlockedSpecies);
@@ -152,15 +298,49 @@ function updateUnlockProgress() {
     state.profile.selectedSpecies = "sprout";
   }
 
-  if (previousBest !== state.profile.bestScore || previousUnlocks.size !== state.profile.unlockedSpecies.length) {
+  if (
+    previousPearls !== state.profile.pearls ||
+    previousBest !== state.profile.bestScore ||
+    previousUnlocks.size !== state.profile.unlockedSpecies.length
+  ) {
     saveProfile();
     renderSpeciesCards(true);
-
     for (const speciesId of state.profile.unlockedSpecies) {
       if (!previousUnlocks.has(speciesId)) {
         showToast(`Unlocked ${getSpecies(speciesId).label}`);
       }
     }
+  }
+}
+
+async function syncLoadout() {
+  if (!state.connected || state.pendingLoadout) {
+    return;
+  }
+
+  state.pendingLoadout = true;
+  try {
+    const loadout = currentLoadout();
+    await request("/api/loadout", {
+      method: "POST",
+      body: JSON.stringify({
+        token: state.token,
+        ...loadout
+      })
+    });
+    if (state.snapshot?.self) {
+      state.snapshot.self.speciesId = loadout.speciesId;
+      state.snapshot.self.variantId = loadout.variantId;
+      state.snapshot.self.upgradeLevel = loadout.upgradeLevel;
+      const variant = getSelectedVariant(loadout.speciesId);
+      state.snapshot.self.color = variant.color;
+      state.snapshot.self.accent = variant.accent;
+      state.snapshot.self.rarity = variant.rarity;
+    }
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    state.pendingLoadout = false;
   }
 }
 
@@ -170,8 +350,12 @@ function renderSpeciesCards(force = false) {
   }
 
   const renderKey = JSON.stringify({
-    selected: state.profile.selectedSpecies,
-    unlocked: state.profile.unlockedSpecies
+    pearls: state.profile.pearls,
+    selectedSpecies: state.profile.selectedSpecies,
+    selectedVariants: state.profile.selectedVariants,
+    upgrades: state.profile.upgrades,
+    unlockedSpecies: state.profile.unlockedSpecies,
+    ownedVariants: state.profile.ownedVariants
   });
 
   if (!force && renderKey === state.speciesRenderKey) {
@@ -180,66 +364,141 @@ function renderSpeciesCards(force = false) {
 
   state.speciesRenderKey = renderKey;
   speciesGrid.innerHTML = "";
+  drawerPearlsLabel.textContent = String(state.profile.pearls);
+  drawerRoomLabel.textContent = state.roomId || "solo";
 
   for (const species of state.species) {
-    const locked = !state.profile.unlockedSpecies.includes(species.id);
+    const unlocked = state.profile.unlockedSpecies.includes(species.id);
     const selected = state.profile.selectedSpecies === species.id;
+    const owned = state.profile.ownedVariants[species.id] || [species.variants[0].id];
+    const selectedVariant = getSelectedVariant(species.id);
+    const rarity = getRarity(selectedVariant.rarity);
+    const currentLevel = getUpgradeLevel(species.id);
+    const nextUpgradeCost = upgradeCost(species, currentLevel);
+    const scoutCost = variantDiscoveryCost(species);
+    const lockedVariantsLeft = species.variants.some((variant) => !owned.includes(variant.id));
+
     const card = document.createElement("article");
-    card.className = `species-card${locked ? " locked" : ""}${selected ? " selected" : ""}`;
+    card.className = `species-card${!unlocked ? " locked" : ""}${selected ? " selected" : ""}`;
+
+    const variantButtons = owned
+      .map((variantId) => {
+        const variant = species.variants.find((entry) => entry.id === variantId);
+        if (!variant) {
+          return "";
+        }
+        return `<button class="variant-chip${selectedVariant.id === variant.id ? " selected" : ""}" type="button" data-action="variant" data-species="${species.id}" data-variant="${variant.id}">
+          <span style="background:${variant.color}"></span>${variant.label}
+        </button>`;
+      })
+      .join("");
 
     card.innerHTML = `
-      <header>
-        <strong><span class="species-swatch" style="background:${species.color}; color:${species.color}"></span>${species.label}</strong>
-        <span>${locked ? "Locked" : "Ready"}</span>
-      </header>
-      <div class="species-meta">
-        <span>Unlock score ${species.unlockScore}</span>
-        <span>Speed ${Math.round(species.speed)}</span>
+      <div class="card-header">
+        <strong><span class="species-swatch" style="background:${selectedVariant.color}; color:${selectedVariant.color}"></span>${species.label}</strong>
+        <span class="variant-badge ${rarity.id}">${rarity.label}</span>
       </div>
-      <button ${locked ? "disabled" : ""} data-species="${species.id}">${selected ? "Selected" : locked ? `Need ${species.unlockScore}` : "Switch"}</button>
+      <div class="card-meta">
+        <span>Owned ${owned.length}/${species.variants.length}</span>
+        <span>Upgrade Lv.${currentLevel}/${state.maxUpgradeLevel}</span>
+      </div>
+      <div class="card-actions">
+        <button type="button" data-action="species" data-species="${species.id}" ${!unlocked ? "disabled" : ""}>${selected ? "Swimming" : unlocked ? "Swim As" : `Need ${species.unlockScore}`}</button>
+        <button type="button" data-action="upgrade" data-species="${species.id}" ${!unlocked || currentLevel >= state.maxUpgradeLevel || state.profile.pearls < nextUpgradeCost ? "disabled" : ""}>Upgrade ${currentLevel < state.maxUpgradeLevel ? `(${nextUpgradeCost})` : "(Max)"}</button>
+        <button type="button" data-action="scout" data-species="${species.id}" ${!unlocked || !lockedVariantsLeft || state.profile.pearls < scoutCost ? "disabled" : ""}>Scout Variant ${lockedVariantsLeft ? `(${scoutCost})` : "(Done)"}</button>
+      </div>
+      <div class="variant-list">${variantButtons}</div>
     `;
 
     speciesGrid.appendChild(card);
   }
 
-  speciesGrid.querySelectorAll("button[data-species]").forEach((button) => {
+  speciesGrid.querySelectorAll("[data-action]").forEach((button) => {
     button.addEventListener("click", async () => {
       const speciesId = button.dataset.species;
-      if (!state.profile.unlockedSpecies.includes(speciesId)) {
+      const species = getSpecies(speciesId);
+      const action = button.dataset.action;
+
+      if (action === "species") {
+        if (!state.profile.unlockedSpecies.includes(speciesId)) {
+          return;
+        }
+        state.profile.selectedSpecies = speciesId;
+        saveProfile();
+        renderSpeciesCards(true);
+        setUnlockPanelOpen(false);
+        await syncLoadout();
+        showToast(`${species.label} selected`);
         return;
       }
 
-      state.profile.selectedSpecies = speciesId;
-      saveProfile();
-      renderSpeciesCards(true);
-      setUnlockPanelOpen(false);
-
-      if (state.connected) {
-        try {
-          await request("/api/select-species", {
-            method: "POST",
-            body: JSON.stringify({ token: state.token, speciesId })
-          });
-          if (state.snapshot?.self) {
-            state.snapshot.self.speciesId = speciesId;
-          }
-          showToast(`${getSpecies(speciesId).label} selected`);
-        } catch (error) {
-          showToast(error.message);
+      if (action === "variant") {
+        const variantId = button.dataset.variant;
+        if (!(state.profile.ownedVariants[speciesId] || []).includes(variantId)) {
+          return;
         }
+        state.profile.selectedVariants[speciesId] = variantId;
+        if (state.profile.selectedSpecies === speciesId) {
+          saveProfile();
+          renderSpeciesCards(true);
+          await syncLoadout();
+        } else {
+          saveProfile();
+          renderSpeciesCards(true);
+        }
+        return;
+      }
+
+      if (action === "upgrade") {
+        const currentLevel = getUpgradeLevel(speciesId);
+        const cost = upgradeCost(species, currentLevel);
+        if (currentLevel >= state.maxUpgradeLevel || state.profile.pearls < cost) {
+          return;
+        }
+        state.profile.pearls -= cost;
+        state.profile.upgrades[speciesId] = currentLevel + 1;
+        saveProfile();
+        renderSpeciesCards(true);
+        if (state.profile.selectedSpecies === speciesId) {
+          await syncLoadout();
+        }
+        showToast(`${species.label} upgraded to Lv.${currentLevel + 1}`);
+        return;
+      }
+
+      if (action === "scout") {
+        const cost = variantDiscoveryCost(species);
+        if (state.profile.pearls < cost) {
+          return;
+        }
+        const found = rollLockedVariant(species);
+        if (!found) {
+          showToast("All variants already collected");
+          return;
+        }
+        state.profile.pearls -= cost;
+        state.profile.ownedVariants[speciesId].push(found.id);
+        state.profile.selectedVariants[speciesId] = found.id;
+        saveProfile();
+        renderSpeciesCards(true);
+        if (state.profile.selectedSpecies === speciesId) {
+          await syncLoadout();
+        }
+        showToast(`Found ${found.label} (${getRarity(found.rarity).label})`);
       }
     });
   });
 }
 
 async function connect(name, roomId) {
+  const loadout = currentLoadout();
   const payload = await request("/api/join", {
     method: "POST",
     body: JSON.stringify({
       token: state.token,
       name,
       roomId,
-      speciesId: state.profile.selectedSpecies
+      ...loadout
     })
   });
 
@@ -247,17 +506,20 @@ async function connect(name, roomId) {
   state.roomId = payload.roomId;
   state.connected = true;
   state.species = payload.species;
+  state.rarities = payload.rarities;
+  state.maxUpgradeLevel = payload.maxUpgradeLevel;
 
   localStorage.setItem("grow-token", state.token);
   state.profile.name = name;
   saveProfile();
+  normalizeProfileAgainstConfig();
 
   joinPanel.classList.add("hidden");
   hudPanel.classList.remove("hidden");
   unlockPanel.classList.remove("hidden");
   unlockToggle.classList.remove("hidden");
 
-  updateShareLink(state.roomId);
+  updateShareLink(state.roomId, payload.shareUrl);
   renderSpeciesCards(true);
   setUnlockPanelOpen(window.innerWidth > 980);
   showToast("Joined the room.");
@@ -271,14 +533,18 @@ function updateHud() {
 
   speciesLabel.textContent = getSpecies(self.speciesId).label;
   massLabel.textContent = String(Math.round(self.mass));
+  pearlsLabel.textContent = String(state.profile.pearls);
   bestLabel.textContent = String(state.profile.bestScore);
   streakLabel.textContent = String(self.streak);
-  statusLabel.textContent = self.alive ? `Room ${state.roomId}` : "Respawning";
+  statusLabel.textContent = self.alive ? `Room ${state.roomId} • ${state.snapshot.roomPopulation} online` : "Respawning";
+  drawerPearlsLabel.textContent = String(state.profile.pearls);
+  drawerRoomLabel.textContent = state.roomId;
 
   leaderboardList.innerHTML = "";
   for (const entry of state.snapshot.leaderboard || []) {
     const item = document.createElement("li");
-    item.innerHTML = `<span>${entry.name}</span><strong>${entry.score}</strong>`;
+    const rarity = getRarity(entry.rarity);
+    item.innerHTML = `<span>${entry.name} <small style="color:${rarity.ring}">${rarity.label}</small></span><strong>${entry.score}</strong>`;
     leaderboardList.appendChild(item);
   }
 }
@@ -412,26 +678,36 @@ function drawFish(entity, isSelf = false) {
   }
 
   const angle = Math.atan2(entity.vy || 0.0001, entity.vx || 1);
+  const bodyColor = entity.color || species.color;
+  const accentColor = entity.accent || species.accent;
+  const rarity = getRarity(entity.rarity || "common");
+
   ctx.save();
   ctx.translate(point.x, point.y);
   ctx.rotate(angle);
 
   const bodyGradient = ctx.createLinearGradient(-radius, 0, radius, 0);
-  bodyGradient.addColorStop(0, species.accent);
-  bodyGradient.addColorStop(1, species.color);
+  bodyGradient.addColorStop(0, accentColor);
+  bodyGradient.addColorStop(1, bodyColor);
 
   ctx.fillStyle = bodyGradient;
   ctx.beginPath();
   ctx.ellipse(0, 0, radius * 1.2, radius * 0.78, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  ctx.fillStyle = species.color;
+  ctx.fillStyle = bodyColor;
   ctx.beginPath();
   ctx.moveTo(-radius * 1.15, 0);
   ctx.lineTo(-radius * 1.9, radius * 0.72);
   ctx.lineTo(-radius * 1.9, -radius * 0.72);
   ctx.closePath();
   ctx.fill();
+
+  ctx.strokeStyle = rarity.ring;
+  ctx.lineWidth = isSelf ? 2.5 : 1.5;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, radius * 1.3, radius * 0.9, 0, 0, Math.PI * 2);
+  ctx.stroke();
 
   ctx.fillStyle = "rgba(255,255,255,0.85)";
   ctx.beginPath();
@@ -442,15 +718,8 @@ function drawFish(entity, isSelf = false) {
   ctx.arc(radius * 0.42, -radius * 0.12, Math.max(1.5, radius * 0.05), 0, Math.PI * 2);
   ctx.fill();
 
-  if (isSelf) {
-    ctx.strokeStyle = "rgba(255,255,255,0.4)";
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, radius * 1.34, radius * 0.92, 0, 0, Math.PI * 2);
-    ctx.stroke();
-  }
-
   ctx.restore();
+
   ctx.fillStyle = "rgba(240, 250, 255, 0.95)";
   ctx.font = '600 13px "Bahnschrift", "Trebuchet MS", sans-serif';
   ctx.textAlign = "center";
@@ -565,9 +834,6 @@ window.addEventListener("keyup", (event) => {
 
 window.addEventListener("resize", () => {
   resize();
-  if (window.innerWidth > 980 && !state.connected) {
-    setUnlockPanelOpen(true);
-  }
 });
 
 Promise.resolve()
@@ -583,6 +849,7 @@ Promise.resolve()
   })
   .finally(() => {
     resize();
+    setUnlockPanelOpen(window.innerWidth > 980);
     setInterval(pollState, 120);
     setInterval(sendInput, 80);
     requestAnimationFrame(renderFrame);
