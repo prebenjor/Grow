@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Grow</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+
+    <div class="layout">
+      <section class="panel hero" id="joinPanel">
+        <p class="eyebrow">Grow</p>
+        <h1>Start tiny. Eat everything smaller.</h1>
+        <p class="subtitle">
+          This version is optimized for static hosting. It runs fully in the browser, stays fast, and supports multiplayer
+          across tabs in the same browser with shared progression and unlockable fish.
+        </p>
+        <form id="joinForm">
+          <label>
+            <span>Name</span>
+            <input id="nameInput" maxlength="18" placeholder="Shoal Scout" autocomplete="off" />
+          </label>
+          <button type="submit">Swim</button>
+        </form>
+        <p class="hint">Mouse or WASD to steer. Hold Space to boost. Open another tab to test multiplayer.</p>
+      </section>
+
+      <section class="panel hud hidden" id="hudPanel">
+        <div class="stats">
+          <div><span class="label">Fish</span><strong id="speciesLabel">Sprout Fry</strong></div>
+          <div><span class="label">Mass</span><strong id="massLabel">24</strong></div>
+          <div><span class="label">Best</span><strong id="bestLabel">0</strong></div>
+          <div><span class="label">Host</span><strong id="hostLabel">No</strong></div>
+        </div>
+        <div class="leaderboard">
+          <div class="leaderboard-head">
+            <span>Top fish</span>
+            <strong id="statusLabel">Waiting</strong>
+          </div>
+          <ol id="leaderboardList"></ol>
+        </div>
+      </section>
+
+      <section class="panel unlocks hidden" id="unlockPanel">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">Unlocks</p>
+            <h2>Choose your fish</h2>
+          </div>
+          <p class="hint">Static-hosted version: multiplayer works across tabs in the same browser.</p>
+        </div>
+        <div class="species-grid" id="speciesGrid"></div>
+      </section>
+    </div>
+
+    <div class="toast hidden" id="toast"></div>
+
+    <script src="game.js"></script>
+  </body>
+</html>

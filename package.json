@@ -1,0 +1,9 @@
+{
+  "name": "ocean-rush",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Static fish survival game prepared for GitHub Pages.",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

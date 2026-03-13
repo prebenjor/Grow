@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Ocean Rush</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+
+    <div class="shell">
+      <section class="panel hero" id="joinPanel">
+        <p class="eyebrow">Ocean Rush</p>
+        <h1>Eat, evolve, outgrow the shoal.</h1>
+        <p class="subtitle">
+          Swim a shared ocean, eat pellets and weaker fish, dodge larger predators, and unlock new species as your best
+          run climbs.
+        </p>
+        <form id="joinForm">
+          <label>
+            <span>Name</span>
+            <input id="nameInput" name="name" maxlength="18" placeholder="Shoal Scout" autocomplete="off" />
+          </label>
+          <button type="submit">Dive In</button>
+        </form>
+        <p class="hint">Use mouse or WASD to steer. Hold Space to boost. Open another tab for multiplayer testing.</p>
+      </section>
+
+      <section class="panel hud hidden" id="hudPanel">
+        <div class="stats">
+          <div>
+            <span class="label">Fish</span>
+            <strong id="speciesLabel">Sprout Fry</strong>
+          </div>
+          <div>
+            <span class="label">Mass</span>
+            <strong id="massLabel">0</strong>
+          </div>
+          <div>
+            <span class="label">Best</span>
+            <strong id="bestLabel">0</strong>
+          </div>
+          <div>
+            <span class="label">Streak</span>
+            <strong id="streakLabel">0</strong>
+          </div>
+        </div>
+        <div class="leaderboard">
+          <div class="leaderboard-header">
+            <span>Top swimmers</span>
+            <strong id="statusLabel">Connecting</strong>
+          </div>
+          <ol id="leaderboardList"></ol>
+        </div>
+      </section>
+
+      <section class="panel unlocks hidden" id="unlockPanel">
+        <div class="unlocks-header">
+          <div>
+            <p class="eyebrow">Unlocks</p>
+            <h2>Choose your fish</h2>
+          </div>
+          <p class="hint">New species unlock from your session best score.</p>
+        </div>
+        <div class="species-grid" id="speciesGrid"></div>
+      </section>
+    </div>
+
+    <div class="toast hidden" id="toast"></div>
+
+    <script src="/game.js"></script>
+  </body>
+</html>
