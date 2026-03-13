@@ -9,22 +9,28 @@
   <body>
     <canvas id="game"></canvas>
 
+    <button class="unlock-toggle hidden" id="unlockToggle" type="button">Fish</button>
+
     <div class="layout">
       <section class="panel hero" id="joinPanel">
         <p class="eyebrow">Grow</p>
-        <h1>Start tiny. Eat everything smaller.</h1>
+        <h1>Eat smaller fish. Get huge.</h1>
         <p class="subtitle">
-          This version is optimized for static hosting. It runs fully in the browser, stays fast, and supports multiplayer
-          across tabs in the same browser with shared progression and unlockable fish.
+          This build uses a real multiplayer server. Share the room link and another player can join the same ocean from
+          their own browser.
         </p>
         <form id="joinForm">
           <label>
             <span>Name</span>
             <input id="nameInput" maxlength="18" placeholder="Shoal Scout" autocomplete="off" />
           </label>
-          <button type="submit">Swim</button>
+          <label>
+            <span>Room</span>
+            <input id="roomInput" maxlength="24" placeholder="ocean" autocomplete="off" />
+          </label>
+          <button type="submit">Dive In</button>
         </form>
-        <p class="hint">Mouse or WASD to steer. Hold Space to boost. Open another tab to test multiplayer.</p>
+        <p class="hint">Mouse or WASD to steer. Hold Space to boost. Share the room link after joining.</p>
       </section>
 
       <section class="panel hud hidden" id="hudPanel">
@@ -32,27 +38,37 @@
           <div><span class="label">Fish</span><strong id="speciesLabel">Sprout Fry</strong></div>
           <div><span class="label">Mass</span><strong id="massLabel">24</strong></div>
           <div><span class="label">Best</span><strong id="bestLabel">0</strong></div>
-          <div><span class="label">Host</span><strong id="hostLabel">No</strong></div>
+          <div><span class="label">Streak</span><strong id="streakLabel">0</strong></div>
         </div>
+
+        <div class="share">
+          <label>
+            <span>Invite link</span>
+            <input id="shareInput" readonly />
+          </label>
+          <button id="copyInviteButton" type="button">Copy</button>
+        </div>
+
         <div class="leaderboard">
-          <div class="leaderboard-head">
-            <span>Top fish</span>
-            <strong id="statusLabel">Waiting</strong>
+          <div class="leaderboard-header">
+            <span>Top swimmers</span>
+            <strong id="statusLabel">Connecting</strong>
           </div>
           <ol id="leaderboardList"></ol>
         </div>
       </section>
 
-      <section class="panel unlocks hidden" id="unlockPanel">
-        <div class="section-head">
+      <aside class="panel unlocks hidden" id="unlockPanel">
+        <div class="unlocks-header">
           <div>
             <p class="eyebrow">Unlocks</p>
             <h2>Choose your fish</h2>
           </div>
-          <p class="hint">Static-hosted version: multiplayer works across tabs in the same browser.</p>
+          <button class="close-button" id="closeUnlocksButton" type="button">Close</button>
         </div>
+        <p class="hint unlocks-hint">Pick a fish, then close this drawer and keep swimming.</p>
         <div class="species-grid" id="speciesGrid"></div>
-      </section>
+      </aside>
     </div>
 
     <div class="toast hidden" id="toast"></div>

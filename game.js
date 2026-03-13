@@ -5,76 +5,44 @@ const joinForm = document.getElementById("joinForm");
 const joinPanel = document.getElementById("joinPanel");
 const hudPanel = document.getElementById("hudPanel");
 const unlockPanel = document.getElementById("unlockPanel");
+const unlockToggle = document.getElementById("unlockToggle");
+const closeUnlocksButton = document.getElementById("closeUnlocksButton");
 const nameInput = document.getElementById("nameInput");
+const roomInput = document.getElementById("roomInput");
+const shareInput = document.getElementById("shareInput");
+const copyInviteButton = document.getElementById("copyInviteButton");
 const speciesGrid = document.getElementById("speciesGrid");
 const leaderboardList = document.getElementById("leaderboardList");
 const speciesLabel = document.getElementById("speciesLabel");
 const massLabel = document.getElementById("massLabel");
 const bestLabel = document.getElementById("bestLabel");
-const hostLabel = document.getElementById("hostLabel");
+const streakLabel = document.getElementById("streakLabel");
 const statusLabel = document.getElementById("statusLabel");
 const toast = document.getElementById("toast");
 
-const SPECIES = [
-  { id: "sprout", label: "Sprout Fry", unlockScore: 0, color: "#f6c555", accent: "#fff0b7", speed: 212, accel: 455, boostCost: 0.06 },
-  { id: "dartfin", label: "Dartfin", unlockScore: 90, color: "#ff8a5b", accent: "#ffd6bb", speed: 228, accel: 485, boostCost: 0.075 },
-  { id: "reefglider", label: "Reef Glider", unlockScore: 220, color: "#3ec7c2", accent: "#cbfffb", speed: 198, accel: 425, boostCost: 0.055 },
-  { id: "puffer", label: "Puffer Bruiser", unlockScore: 420, color: "#6bb0ff", accent: "#e3f1ff", speed: 182, accel: 400, boostCost: 0.045 },
-  { id: "abyssal", label: "Abyssal Hunter", unlockScore: 650, color: "#9f7cff", accent: "#f0e8ff", speed: 206, accel: 440, boostCost: 0.08 }
-];
-
-const WORLD = { width: 4200, height: 2600 };
-const START_MASS = 24;
-const MAX_FOOD = 140;
-const MAX_BOTS = 16;
-const PLAYER_TIMEOUT_MS = 6000;
-const SNAPSHOT_MS = 90;
-const HEARTBEAT_MS = 1000;
-const TICK_MS = 1000 / 30;
-const CHANNEL_NAME = "grow-ocean-pages-v1";
 const PROFILE_KEY = "grow-profile";
-const TAB_ID_KEY = "grow-tab-id";
-const OPENED_AT_KEY = "grow-opened-at";
 
-const speciesById = Object.fromEntries(SPECIES.map((species) => [species.id, species]));
-const channel = "BroadcastChannel" in window ? new BroadcastChannel(CHANNEL_NAME) : null;
-
-let nextFoodId = 1;
-let nextBotId = 1;
-let toastTimer = null;
-
-const profile = loadProfile();
-const runtime = {
-  joined: false,
-  tabId: getSessionValue(TAB_ID_KEY, () => crypto.randomUUID()),
-  openedAt: Number(getSessionValue(OPENED_AT_KEY, () => String(Date.now() + Math.random()))),
-  isHost: false,
-  hostId: null,
-  lastFrame: performance.now(),
-  accumulator: 0,
+const state = {
+  token: localStorage.getItem("grow-token") || "",
+  roomId: new URLSearchParams(window.location.search).get("room") || "",
+  snapshot: null,
+  connected: false,
+  config: null,
+  species: [],
+  profile: loadProfile(),
   pointer: { x: 0, y: 0, active: false },
   keys: new Set(),
-  peers: new Map(),
-  inputs: new Map(),
-  snapshot: null,
-  lastPresenceAt: 0,
-  lastHeartbeatAt: 0,
-  lastInputSentAt: 0,
-  lastSnapshotAt: 0,
-  hostSnapshotAt: 0,
-  lastHostCheckAt: 0,
-  hostHeartbeatAt: 0,
-  camera: { x: 0, y: 0, zoom: 1 }
+  camera: { x: 0, y: 0, zoom: 1 },
+  lastFrame: performance.now(),
+  pendingState: false,
+  pendingInput: false,
+  speciesRenderKey: "",
+  toastTimer: null,
+  unlockPanelOpen: window.innerWidth > 980
 };
 
-const world = {
-  players: new Map(),
-  foods: [],
-  bots: [],
-  tick: 0
-};
-
-nameInput.value = profile.name;
+nameInput.value = state.profile.name;
+roomInput.value = state.roomId;
 
 function loadProfile() {
   try {
@@ -83,7 +51,7 @@ function loadProfile() {
       name: parsed.name || "",
       bestScore: parsed.bestScore || 0,
       unlockedSpecies: Array.isArray(parsed.unlockedSpecies) ? parsed.unlockedSpecies : ["sprout"],
-      selectedSpecies: speciesById[parsed.selectedSpecies] ? parsed.selectedSpecies : "sprout"
+      selectedSpecies: parsed.selectedSpecies || "sprout"
     };
   } catch (error) {
     return {
@@ -96,603 +64,126 @@ function loadProfile() {
 }
 
 function saveProfile() {
-  localStorage.setItem(PROFILE_KEY, JSON.stringify(profile));
+  localStorage.setItem(PROFILE_KEY, JSON.stringify(state.profile));
 }
 
-function getSessionValue(key, create) {
-  let value = sessionStorage.getItem(key);
-  if (!value) {
-    value = create();
-    sessionStorage.setItem(key, value);
-  }
-  return value;
+function resize() {
+  const scale = Math.min(window.devicePixelRatio || 1, 1.5);
+  canvas.width = window.innerWidth * scale;
+  canvas.height = window.innerHeight * scale;
+  canvas.style.width = `${window.innerWidth}px`;
+  canvas.style.height = `${window.innerHeight}px`;
+  ctx.setTransform(scale, 0, 0, scale, 0, 0);
+}
+
+function setUnlockPanelOpen(nextOpen) {
+  state.unlockPanelOpen = nextOpen;
+  document.body.classList.toggle("unlocks-open", nextOpen);
 }
 
 function showToast(message) {
   toast.textContent = message;
   toast.classList.remove("hidden");
-  clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => toast.classList.add("hidden"), 2600);
+  clearTimeout(state.toastTimer);
+  state.toastTimer = setTimeout(() => toast.classList.add("hidden"), 2600);
 }
 
-function random(min, max) {
-  return Math.random() * (max - min) + min;
+async function request(path, options = {}) {
+  const response = await fetch(path, {
+    headers: {
+      "Content-Type": "application/json"
+    },
+    cache: "no-store",
+    ...options
+  });
+
+  const payload = await response.json();
+  if (!response.ok) {
+    throw new Error(payload.error || "Request failed");
+  }
+  return payload;
 }
 
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
+function sanitizeRoomId(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9-]/g, "")
+    .slice(0, 24);
 }
 
-function distance(a, b) {
-  return Math.hypot(a.x - b.x, a.y - b.y);
-}
-
-function normalize(x, y) {
-  const length = Math.hypot(x, y);
-  return length ? { x: x / length, y: y / length } : { x: 0, y: 0 };
-}
-
-function massToRadius(mass) {
-  return 7 + Math.sqrt(mass) * 3;
+function randomRoomId() {
+  return Math.random().toString(36).slice(2, 8);
 }
 
 function getSpecies(speciesId) {
-  return speciesById[speciesId] || SPECIES[0];
+  return state.species.find((entry) => entry.id === speciesId) || state.species[0];
 }
 
-function currentInput() {
-  let x = 0;
-  let y = 0;
-
-  if (runtime.keys.has("KeyA")) x -= 1;
-  if (runtime.keys.has("KeyD")) x += 1;
-  if (runtime.keys.has("KeyW")) y -= 1;
-  if (runtime.keys.has("KeyS")) y += 1;
-
-  if (x === 0 && y === 0 && runtime.pointer.active) {
-    x = runtime.pointer.x - window.innerWidth / 2;
-    y = runtime.pointer.y - window.innerHeight / 2;
-  }
-
-  const vector = normalize(x, y);
-  return {
-    x: Math.abs(x) < 12 ? 0 : vector.x,
-    y: Math.abs(y) < 12 ? 0 : vector.y,
-    boost: runtime.keys.has("Space") || runtime.keys.has("ShiftLeft") || runtime.keys.has("ShiftRight")
-  };
+function updateShareLink(roomId) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("room", roomId);
+  history.replaceState({}, "", `${url.pathname}?${url.searchParams.toString()}`);
+  shareInput.value = url.toString();
 }
 
-function createFood() {
-  const palette = ["#ffcf5c", "#6ae9d0", "#ff7a8a", "#84a9ff", "#ffd3ee", "#9cff71"];
-  return {
-    id: `food-${nextFoodId++}`,
-    x: random(60, WORLD.width - 60),
-    y: random(60, WORLD.height - 60),
-    radius: random(3.5, 6.5),
-    value: random(2.5, 7),
-    color: palette[Math.floor(Math.random() * palette.length)]
-  };
+async function loadConfig() {
+  state.config = await request("/api/config");
+  state.species = state.config.species;
 }
 
-function createBot() {
-  const mass = random(18, 150);
-  const tier = mass > 115 ? "puffer" : mass > 70 ? "reefglider" : mass > 40 ? "dartfin" : "sprout";
-  return {
-    id: `bot-${nextBotId++}`,
-    name: ["Nib", "Reef", "Glint", "Snap", "Drift", "Ripple"][Math.floor(Math.random() * 6)],
-    speciesId: tier,
-    x: random(120, WORLD.width - 120),
-    y: random(120, WORLD.height - 120),
-    vx: 0,
-    vy: 0,
-    inputX: random(-1, 1),
-    inputY: random(-1, 1),
-    boosting: false,
-    mass,
-    score: Math.max(0, mass - START_MASS),
-    radius: massToRadius(mass),
-    wanderAt: 0
-  };
-}
-
-function resetWorld() {
-  world.players.clear();
-  world.foods.length = 0;
-  world.bots.length = 0;
-  world.tick = 0;
-  nextFoodId = 1;
-  nextBotId = 1;
-  while (world.foods.length < MAX_FOOD) world.foods.push(createFood());
-  while (world.bots.length < MAX_BOTS) world.bots.push(createBot());
-}
-
-function createPlayer(peer) {
-  return {
-    id: peer.id,
-    name: peer.name,
-    speciesId: peer.selectedSpecies,
-    x: random(240, WORLD.width - 240),
-    y: random(240, WORLD.height - 240),
-    vx: 0,
-    vy: 0,
-    inputX: 0,
-    inputY: 0,
-    boosting: false,
-    mass: START_MASS,
-    score: 0,
-    radius: massToRadius(START_MASS),
-    alive: true,
-    respawnAt: 0,
-    defeatedBy: "",
-    streak: 0,
-    bestScore: peer.bestScore || 0
-  };
-}
-
-function getMoveStats(actor) {
-  const species = getSpecies(actor.speciesId);
-  const sizePenalty = clamp((actor.mass - START_MASS) * 0.18, 0, 125);
-  return {
-    maxSpeed: Math.max(82, species.speed - sizePenalty),
-    accel: species.accel,
-    boostCost: species.boostCost
-  };
-}
-
-function applyMovement(actor, dt) {
-  const desired = normalize(actor.inputX, actor.inputY);
-  const stats = getMoveStats(actor);
-
-  actor.vx += desired.x * stats.accel * dt;
-  actor.vy += desired.y * stats.accel * dt;
-
-  if (actor.boosting && actor.mass > START_MASS + 5) {
-    actor.vx += desired.x * stats.accel * 0.8 * dt;
-    actor.vy += desired.y * stats.accel * 0.8 * dt;
-    actor.mass = Math.max(START_MASS, actor.mass - stats.boostCost);
-    actor.score = Math.max(0, actor.mass - START_MASS);
-    actor.radius = massToRadius(actor.mass);
-  }
-
-  const drag = Math.pow(0.91, dt * 60);
-  actor.vx *= drag;
-  actor.vy *= drag;
-
-  const speed = Math.hypot(actor.vx, actor.vy);
-  const cap = stats.maxSpeed * (actor.boosting ? 1.16 : 1);
-  if (speed > cap) {
-    actor.vx = (actor.vx / speed) * cap;
-    actor.vy = (actor.vy / speed) * cap;
-  }
-
-  actor.x = clamp(actor.x + actor.vx * dt, actor.radius, WORLD.width - actor.radius);
-  actor.y = clamp(actor.y + actor.vy * dt, actor.radius, WORLD.height - actor.radius);
-}
-
-function grow(actor, amount) {
-  actor.mass += amount;
-  actor.score = Math.max(actor.score, actor.mass - START_MASS);
-  actor.radius = massToRadius(actor.mass);
-  actor.bestScore = Math.max(actor.bestScore || 0, Math.floor(actor.score));
-}
-
-function respawnPlayer(player) {
-  const peer = runtime.peers.get(player.id);
-  player.x = random(240, WORLD.width - 240);
-  player.y = random(240, WORLD.height - 240);
-  player.vx = 0;
-  player.vy = 0;
-  player.inputX = 0;
-  player.inputY = 0;
-  player.boosting = false;
-  player.mass = START_MASS;
-  player.score = 0;
-  player.radius = massToRadius(START_MASS);
-  player.alive = true;
-  player.respawnAt = 0;
-  player.defeatedBy = "";
-  player.streak = 0;
-  player.speciesId = peer?.selectedSpecies || player.speciesId;
-}
-
-function defeatPlayer(player, byName) {
-  player.alive = false;
-  player.respawnAt = performance.now() + 2400;
-  player.defeatedBy = byName;
-}
-
-function ensurePopulation() {
-  while (world.foods.length < MAX_FOOD) world.foods.push(createFood());
-  while (world.bots.length < MAX_BOTS) world.bots.push(createBot());
-}
-
-function updateBots(now, dt) {
-  const players = [...world.players.values()].filter((player) => player.alive);
-
-  for (const bot of world.bots) {
-    if (now >= bot.wanderAt) {
-      const threat = players.find((player) => distance(bot, player) < 250 && player.mass > bot.mass * 1.18);
-      const prey = players.find((player) => distance(bot, player) < 320 && bot.mass > player.mass * 1.18);
-
-      if (threat) {
-        const vector = normalize(bot.x - threat.x, bot.y - threat.y);
-        bot.inputX = vector.x;
-        bot.inputY = vector.y;
-        bot.wanderAt = now + random(420, 880);
-      } else if (prey) {
-        const vector = normalize(prey.x - bot.x, prey.y - bot.y);
-        bot.inputX = vector.x;
-        bot.inputY = vector.y;
-        bot.wanderAt = now + random(360, 720);
-      } else {
-        const vector = normalize(random(-1, 1), random(-1, 1));
-        bot.inputX = vector.x;
-        bot.inputY = vector.y;
-        bot.wanderAt = now + random(900, 1800);
-      }
-    }
-
-    bot.boosting = Math.random() < 0.025;
-    applyMovement(bot, dt);
-  }
-}
-
-function consumeFoodsFor(actor, multiplier) {
-  for (let index = world.foods.length - 1; index >= 0; index -= 1) {
-    const food = world.foods[index];
-    if (distance(actor, food) <= actor.radius + food.radius) {
-      grow(actor, food.value * multiplier);
-      world.foods.splice(index, 1);
-    }
-  }
-}
-
-function canEat(predator, prey) {
-  return predator.mass > prey.mass * 1.12 && distance(predator, prey) < predator.radius * 0.9;
-}
-
-function respawnBot(index) {
-  world.bots[index] = createBot();
-}
-
-function resolveEncounters() {
-  const players = [...world.players.values()].filter((player) => player.alive);
-
-  for (let i = 0; i < players.length; i += 1) {
-    for (let j = i + 1; j < players.length; j += 1) {
-      const a = players[i];
-      const b = players[j];
-      if (canEat(a, b)) {
-        grow(a, b.mass * 0.62);
-        a.streak += 1;
-        defeatPlayer(b, a.name);
-      } else if (canEat(b, a)) {
-        grow(b, a.mass * 0.62);
-        b.streak += 1;
-        defeatPlayer(a, b.name);
-      }
-    }
-  }
-
-  for (const player of players) {
-    for (let index = world.bots.length - 1; index >= 0; index -= 1) {
-      const bot = world.bots[index];
-      if (canEat(player, bot)) {
-        grow(player, bot.mass * 0.48);
-        player.streak += 1;
-        respawnBot(index);
-      } else if (canEat(bot, player)) {
-        grow(bot, player.mass * 0.5);
-        defeatPlayer(player, bot.name);
-      }
-    }
-  }
-}
-
-function buildSnapshot() {
-  return {
-    world: WORLD,
-    players: [...world.players.values()].map((player) => ({
-      id: player.id,
-      name: player.name,
-      speciesId: player.speciesId,
-      x: player.x,
-      y: player.y,
-      vx: player.vx,
-      vy: player.vy,
-      radius: player.radius,
-      mass: player.mass,
-      score: Math.floor(player.score),
-      bestScore: Math.floor(player.bestScore || 0),
-      streak: player.streak,
-      alive: player.alive,
-      respawnAt: player.respawnAt,
-      defeatedBy: player.defeatedBy
-    })),
-    bots: world.bots.map((bot) => ({
-      id: bot.id,
-      name: bot.name,
-      speciesId: bot.speciesId,
-      x: bot.x,
-      y: bot.y,
-      vx: bot.vx,
-      vy: bot.vy,
-      radius: bot.radius,
-      mass: bot.mass
-    })),
-    foods: world.foods.map((food) => ({
-      id: food.id,
-      x: food.x,
-      y: food.y,
-      radius: food.radius,
-      color: food.color
-    })),
-    leaderboard: [...world.players.values()]
-      .filter((player) => player.alive)
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 8)
-      .map((player) => ({ id: player.id, name: player.name, score: Math.floor(player.score), speciesId: player.speciesId }))
-  };
-}
-
-function hostStep(now, dt) {
-  for (const [id, peer] of runtime.peers) {
-    if (now - peer.seenAt > PLAYER_TIMEOUT_MS) {
-      runtime.peers.delete(id);
-      world.players.delete(id);
-    }
-  }
-
-  for (const peer of runtime.peers.values()) {
-    let player = world.players.get(peer.id);
-    if (!player) {
-      player = createPlayer(peer);
-      world.players.set(peer.id, player);
-    }
-    player.name = peer.name;
-    player.speciesId = peer.selectedSpecies;
-    player.bestScore = Math.max(player.bestScore || 0, peer.bestScore || 0);
-  }
-
-  for (const player of world.players.values()) {
-    if (!player.alive) {
-      if (now >= player.respawnAt) {
-        respawnPlayer(player);
-      }
-      continue;
-    }
-
-    const input = runtime.inputs.get(player.id) || { x: 0, y: 0, boost: false };
-    player.inputX = input.x;
-    player.inputY = input.y;
-    player.boosting = input.boost;
-    applyMovement(player, dt);
-    consumeFoodsFor(player, 1);
-  }
-
-  updateBots(now, dt);
-
-  for (const bot of world.bots) {
-    consumeFoodsFor(bot, 0.75);
-  }
-
-  resolveEncounters();
-  ensurePopulation();
-  world.tick += 1;
-
-  if (channel && now - runtime.hostSnapshotAt >= SNAPSHOT_MS) {
-    runtime.hostSnapshotAt = now;
-    channel.postMessage({
-      type: "snapshot",
-      hostId: runtime.tabId,
-      snapshot: buildSnapshot()
-    });
-  }
-
-  if (channel && now - runtime.lastHeartbeatAt >= HEARTBEAT_MS) {
-    runtime.lastHeartbeatAt = now;
-    broadcastPresence();
-  }
-
-  runtime.snapshot = buildSnapshot();
-}
-
-function selfPeer() {
-  return {
-    id: runtime.tabId,
-    rank: runtime.openedAt,
-    name: profile.name || "Shoal Scout",
-    selectedSpecies: profile.selectedSpecies,
-    bestScore: profile.bestScore,
-    seenAt: performance.now()
-  };
-}
-
-function evaluateHost() {
-  if (!runtime.joined) {
-    runtime.isHost = false;
-    runtime.hostId = null;
-    return;
-  }
-
-  const now = performance.now();
-  const activePeers = [...runtime.peers.values()].filter((peer) => now - peer.seenAt < PLAYER_TIMEOUT_MS);
-  activePeers.sort((a, b) => a.rank - b.rank || a.id.localeCompare(b.id));
-  const nextHost = activePeers[0]?.id || runtime.tabId;
-  const changed = runtime.hostId !== nextHost;
-  runtime.hostId = nextHost;
-  runtime.isHost = nextHost === runtime.tabId;
-
-  if (runtime.isHost && changed) {
-    resetWorld();
-    for (const peer of activePeers) {
-      world.players.set(peer.id, createPlayer(peer));
-      runtime.inputs.set(peer.id, { x: 0, y: 0, boost: false });
-    }
-    runtime.snapshot = buildSnapshot();
-    showToast("This tab is now the host.");
-  }
-}
-
-function broadcastPresence() {
-  if (!runtime.joined || !channel) {
-    return;
-  }
-
-  const message = {
-    type: "presence",
-    id: runtime.tabId,
-    rank: runtime.openedAt,
-    name: profile.name || "Shoal Scout",
-    selectedSpecies: profile.selectedSpecies,
-    bestScore: profile.bestScore
-  };
-  channel.postMessage(message);
-  runtime.lastPresenceAt = performance.now();
-}
-
-function handleChannelMessage(event) {
-  const message = event.data;
-  if (!message || !runtime.joined || message.id === runtime.tabId) {
-    return;
-  }
-
-  const now = performance.now();
-
-  if (message.type === "presence") {
-    runtime.peers.set(message.id, {
-      id: message.id,
-      rank: message.rank,
-      name: message.name,
-      selectedSpecies: message.selectedSpecies,
-      bestScore: message.bestScore || 0,
-      seenAt: now
-    });
-    evaluateHost();
-    return;
-  }
-
-  if (message.type === "input" && runtime.isHost) {
-    runtime.inputs.set(message.id, message.input);
-    const peer = runtime.peers.get(message.id);
-    if (peer) {
-      peer.seenAt = now;
-    }
-    return;
-  }
-
-  if (message.type === "snapshot" && !runtime.isHost) {
-    runtime.hostId = message.hostId;
-    runtime.snapshot = message.snapshot;
-    runtime.lastSnapshotAt = now;
-    return;
-  }
-
-  if (message.type === "leave") {
-    runtime.peers.delete(message.id);
-    runtime.inputs.delete(message.id);
-    world.players.delete(message.id);
-    evaluateHost();
-  }
-}
-
-if (channel) {
-  channel.addEventListener("message", handleChannelMessage);
-}
-
-function joinGame(name) {
-  profile.name = name || "Shoal Scout";
-  saveProfile();
-  runtime.joined = true;
-
-  joinPanel.classList.add("hidden");
-  hudPanel.classList.remove("hidden");
-  unlockPanel.classList.remove("hidden");
-
-  runtime.peers.set(runtime.tabId, selfPeer());
-  evaluateHost();
-  broadcastPresence();
-  renderSpeciesCards();
-  showToast(channel ? "Joined the shared ocean." : "BroadcastChannel unavailable: running single-player.");
-}
-
-function syncInput(now) {
-  if (!runtime.joined) {
-    return;
-  }
-
-  const input = currentInput();
-  runtime.inputs.set(runtime.tabId, input);
-
-  const peer = runtime.peers.get(runtime.tabId);
-  if (peer) {
-    peer.seenAt = now;
-    peer.name = profile.name || "Shoal Scout";
-    peer.selectedSpecies = profile.selectedSpecies;
-    peer.bestScore = profile.bestScore;
-  }
-
-  if (runtime.isHost || !channel) {
-    return;
-  }
-
-  if (now - runtime.lastInputSentAt > 70) {
-    runtime.lastInputSentAt = now;
-    channel.postMessage({
-      type: "input",
-      id: runtime.tabId,
-      input
-    });
-  }
-}
-
-function getSelfFromSnapshot() {
-  if (!runtime.snapshot) {
-    return null;
-  }
-  return runtime.snapshot.players.find((player) => player.id === runtime.tabId) || null;
-}
-
-function applyUnlockProgress(self) {
+function updateUnlockProgress() {
+  const self = state.snapshot?.self;
   if (!self) {
     return;
   }
 
-  const before = new Set(profile.unlockedSpecies);
-  const previousBest = profile.bestScore;
-  profile.bestScore = Math.max(profile.bestScore, Math.floor(self.bestScore || self.score || 0));
-  let changed = previousBest !== profile.bestScore;
+  const previousBest = state.profile.bestScore;
+  const previousUnlocks = new Set(state.profile.unlockedSpecies);
 
-  for (const species of SPECIES) {
-    if (profile.bestScore >= species.unlockScore && !profile.unlockedSpecies.includes(species.id)) {
-      profile.unlockedSpecies.push(species.id);
-      showToast(`Unlocked ${species.label}`);
-      changed = true;
+  state.profile.bestScore = Math.max(state.profile.bestScore, self.bestScore || self.score || 0);
+
+  for (const species of state.species) {
+    if (state.profile.bestScore >= species.unlockScore && !state.profile.unlockedSpecies.includes(species.id)) {
+      state.profile.unlockedSpecies.push(species.id);
     }
   }
 
-  if (!before.has(profile.selectedSpecies) && !profile.unlockedSpecies.includes(profile.selectedSpecies)) {
-    profile.selectedSpecies = "sprout";
-    changed = true;
+  if (!state.profile.unlockedSpecies.includes(state.profile.selectedSpecies)) {
+    state.profile.selectedSpecies = "sprout";
   }
 
-  if (changed) {
+  if (previousBest !== state.profile.bestScore || previousUnlocks.size !== state.profile.unlockedSpecies.length) {
     saveProfile();
-    renderSpeciesCards();
-    broadcastPresence();
-  }
+    renderSpeciesCards(true);
 
-  const peer = runtime.peers.get(runtime.tabId);
-  if (peer) {
-    peer.bestScore = profile.bestScore;
+    for (const speciesId of state.profile.unlockedSpecies) {
+      if (!previousUnlocks.has(speciesId)) {
+        showToast(`Unlocked ${getSpecies(speciesId).label}`);
+      }
+    }
   }
 }
 
-function renderSpeciesCards() {
+function renderSpeciesCards(force = false) {
+  if (!state.species.length) {
+    return;
+  }
+
+  const renderKey = JSON.stringify({
+    selected: state.profile.selectedSpecies,
+    unlocked: state.profile.unlockedSpecies
+  });
+
+  if (!force && renderKey === state.speciesRenderKey) {
+    return;
+  }
+
+  state.speciesRenderKey = renderKey;
   speciesGrid.innerHTML = "";
-  for (const species of SPECIES) {
-    const locked = !profile.unlockedSpecies.includes(species.id);
-    const selected = profile.selectedSpecies === species.id;
+
+  for (const species of state.species) {
+    const locked = !state.profile.unlockedSpecies.includes(species.id);
+    const selected = state.profile.selectedSpecies === species.id;
     const card = document.createElement("article");
     card.className = `species-card${locked ? " locked" : ""}${selected ? " selected" : ""}`;
 
@@ -712,87 +203,163 @@ function renderSpeciesCards() {
   }
 
   speciesGrid.querySelectorAll("button[data-species]").forEach((button) => {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
       const speciesId = button.dataset.species;
-      if (!profile.unlockedSpecies.includes(speciesId)) {
+      if (!state.profile.unlockedSpecies.includes(speciesId)) {
         return;
       }
 
-      profile.selectedSpecies = speciesId;
+      state.profile.selectedSpecies = speciesId;
       saveProfile();
+      renderSpeciesCards(true);
+      setUnlockPanelOpen(false);
 
-      const peer = runtime.peers.get(runtime.tabId);
-      if (peer) {
-        peer.selectedSpecies = speciesId;
-      }
-
-      if (runtime.isHost) {
-        const player = world.players.get(runtime.tabId);
-        if (player) {
-          player.speciesId = speciesId;
+      if (state.connected) {
+        try {
+          await request("/api/select-species", {
+            method: "POST",
+            body: JSON.stringify({ token: state.token, speciesId })
+          });
+          if (state.snapshot?.self) {
+            state.snapshot.self.speciesId = speciesId;
+          }
+          showToast(`${getSpecies(speciesId).label} selected`);
+        } catch (error) {
+          showToast(error.message);
         }
       }
-
-      broadcastPresence();
-      renderSpeciesCards();
     });
   });
 }
 
-function updateHud(self) {
-  const species = getSpecies(self?.speciesId || profile.selectedSpecies);
-  speciesLabel.textContent = species.label;
-  massLabel.textContent = String(Math.round(self?.mass || START_MASS));
-  bestLabel.textContent = String(profile.bestScore);
-  hostLabel.textContent = runtime.isHost ? "Yes" : "No";
+async function connect(name, roomId) {
+  const payload = await request("/api/join", {
+    method: "POST",
+    body: JSON.stringify({
+      token: state.token,
+      name,
+      roomId,
+      speciesId: state.profile.selectedSpecies
+    })
+  });
 
-  if (!runtime.joined) {
-    statusLabel.textContent = "Waiting";
-  } else if (!channel) {
-    statusLabel.textContent = "Single-player";
-  } else if (runtime.isHost) {
-    statusLabel.textContent = "Hosting";
-  } else {
-    statusLabel.textContent = "Synced";
+  state.token = payload.token;
+  state.roomId = payload.roomId;
+  state.connected = true;
+  state.species = payload.species;
+
+  localStorage.setItem("grow-token", state.token);
+  state.profile.name = name;
+  saveProfile();
+
+  joinPanel.classList.add("hidden");
+  hudPanel.classList.remove("hidden");
+  unlockPanel.classList.remove("hidden");
+  unlockToggle.classList.remove("hidden");
+
+  updateShareLink(state.roomId);
+  renderSpeciesCards(true);
+  setUnlockPanelOpen(window.innerWidth > 980);
+  showToast("Joined the room.");
+}
+
+function updateHud() {
+  const self = state.snapshot?.self;
+  if (!self) {
+    return;
   }
 
+  speciesLabel.textContent = getSpecies(self.speciesId).label;
+  massLabel.textContent = String(Math.round(self.mass));
+  bestLabel.textContent = String(state.profile.bestScore);
+  streakLabel.textContent = String(self.streak);
+  statusLabel.textContent = self.alive ? `Room ${state.roomId}` : "Respawning";
+
   leaderboardList.innerHTML = "";
-  for (const entry of runtime.snapshot?.leaderboard || []) {
+  for (const entry of state.snapshot.leaderboard || []) {
     const item = document.createElement("li");
     item.innerHTML = `<span>${entry.name}</span><strong>${entry.score}</strong>`;
     leaderboardList.appendChild(item);
   }
 }
 
-function resize() {
-  canvas.width = window.innerWidth * window.devicePixelRatio;
-  canvas.height = window.innerHeight * window.devicePixelRatio;
-  canvas.style.width = `${window.innerWidth}px`;
-  canvas.style.height = `${window.innerHeight}px`;
-  ctx.setTransform(window.devicePixelRatio, 0, 0, window.devicePixelRatio, 0, 0);
+function currentInput() {
+  let x = 0;
+  let y = 0;
+
+  if (state.keys.has("KeyA")) x -= 1;
+  if (state.keys.has("KeyD")) x += 1;
+  if (state.keys.has("KeyW")) y -= 1;
+  if (state.keys.has("KeyS")) y += 1;
+
+  if (x === 0 && y === 0 && state.pointer.active) {
+    x = state.pointer.x - window.innerWidth / 2;
+    y = state.pointer.y - window.innerHeight / 2;
+  }
+
+  const length = Math.hypot(x, y) || 1;
+  return {
+    x: Math.abs(x) < 10 ? 0 : x / length,
+    y: Math.abs(y) < 10 ? 0 : y / length,
+    boost: state.keys.has("Space") || state.keys.has("ShiftLeft") || state.keys.has("ShiftRight")
+  };
 }
 
-function worldToScreen(x, y) {
-  return {
-    x: (x - runtime.camera.x) * runtime.camera.zoom + window.innerWidth / 2,
-    y: (y - runtime.camera.y) * runtime.camera.zoom + window.innerHeight / 2
-  };
+async function pollState() {
+  if (!state.connected || state.pendingState) {
+    return;
+  }
+
+  state.pendingState = true;
+  try {
+    state.snapshot = await request(`/api/state?token=${encodeURIComponent(state.token)}`);
+    updateUnlockProgress();
+    updateHud();
+  } catch (error) {
+    statusLabel.textContent = "Disconnected";
+  } finally {
+    state.pendingState = false;
+  }
+}
+
+async function sendInput() {
+  if (!state.connected || state.pendingInput) {
+    return;
+  }
+
+  state.pendingInput = true;
+  try {
+    const input = currentInput();
+    await request("/api/input", {
+      method: "POST",
+      body: JSON.stringify({
+        token: state.token,
+        x: input.x,
+        y: input.y,
+        boost: input.boost
+      })
+    });
+  } catch (error) {
+    statusLabel.textContent = "Connection lost";
+  } finally {
+    state.pendingInput = false;
+  }
 }
 
 function drawBackground() {
   const gradient = ctx.createLinearGradient(0, 0, 0, window.innerHeight);
-  gradient.addColorStop(0, "#4ab7d8");
-  gradient.addColorStop(0.32, "#185681");
-  gradient.addColorStop(1, "#031424");
+  gradient.addColorStop(0, "#4ab5d6");
+  gradient.addColorStop(0.35, "#17527e");
+  gradient.addColorStop(1, "#041528");
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
 
-  const grid = 170 * runtime.camera.zoom;
-  const offsetX = (-runtime.camera.x * runtime.camera.zoom) % grid;
-  const offsetY = (-runtime.camera.y * runtime.camera.zoom) % grid;
+  const grid = 170 * state.camera.zoom;
   ctx.save();
   ctx.strokeStyle = "rgba(255,255,255,0.04)";
   ctx.lineWidth = 1;
+  const offsetX = (-state.camera.x * state.camera.zoom) % grid;
+  const offsetY = (-state.camera.y * state.camera.zoom) % grid;
   for (let x = offsetX; x < window.innerWidth; x += grid) {
     ctx.beginPath();
     ctx.moveTo(x, 0);
@@ -808,9 +375,16 @@ function drawBackground() {
   ctx.restore();
 }
 
+function worldToScreen(x, y) {
+  return {
+    x: (x - state.camera.x) * state.camera.zoom + window.innerWidth / 2,
+    y: (y - state.camera.y) * state.camera.zoom + window.innerHeight / 2
+  };
+}
+
 function drawFood(food) {
   const point = worldToScreen(food.x, food.y);
-  const radius = food.radius * runtime.camera.zoom;
+  const radius = food.radius * state.camera.zoom;
   if (point.x < -radius || point.y < -radius || point.x > window.innerWidth + radius || point.y > window.innerHeight + radius) {
     return;
   }
@@ -829,48 +403,46 @@ function drawFood(food) {
   ctx.fill();
 }
 
-function drawFish(entity, self) {
+function drawFish(entity, isSelf = false) {
+  const species = getSpecies(entity.speciesId);
   const point = worldToScreen(entity.x, entity.y);
-  const radius = entity.radius * runtime.camera.zoom;
+  const radius = entity.radius * state.camera.zoom;
   if (point.x < -radius * 2 || point.y < -radius * 2 || point.x > window.innerWidth + radius * 2 || point.y > window.innerHeight + radius * 2) {
     return;
   }
 
-  const species = getSpecies(entity.speciesId);
   const angle = Math.atan2(entity.vy || 0.0001, entity.vx || 1);
-
   ctx.save();
   ctx.translate(point.x, point.y);
   ctx.rotate(angle);
 
-  const body = ctx.createLinearGradient(-radius, 0, radius, 0);
-  body.addColorStop(0, species.accent);
-  body.addColorStop(1, species.color);
+  const bodyGradient = ctx.createLinearGradient(-radius, 0, radius, 0);
+  bodyGradient.addColorStop(0, species.accent);
+  bodyGradient.addColorStop(1, species.color);
 
-  ctx.fillStyle = body;
+  ctx.fillStyle = bodyGradient;
   ctx.beginPath();
-  ctx.ellipse(0, 0, radius * 1.18, radius * 0.76, 0, 0, Math.PI * 2);
+  ctx.ellipse(0, 0, radius * 1.2, radius * 0.78, 0, 0, Math.PI * 2);
   ctx.fill();
 
   ctx.fillStyle = species.color;
   ctx.beginPath();
-  ctx.moveTo(-radius * 1.1, 0);
-  ctx.lineTo(-radius * 1.9, radius * 0.7);
-  ctx.lineTo(-radius * 1.9, -radius * 0.7);
+  ctx.moveTo(-radius * 1.15, 0);
+  ctx.lineTo(-radius * 1.9, radius * 0.72);
+  ctx.lineTo(-radius * 1.9, -radius * 0.72);
   ctx.closePath();
   ctx.fill();
 
   ctx.fillStyle = "rgba(255,255,255,0.85)";
   ctx.beginPath();
-  ctx.arc(radius * 0.42, -radius * 0.12, Math.max(2.5, radius * 0.11), 0, Math.PI * 2);
+  ctx.arc(radius * 0.4, -radius * 0.12, Math.max(3, radius * 0.12), 0, Math.PI * 2);
   ctx.fill();
-
-  ctx.fillStyle = "#09253a";
+  ctx.fillStyle = "#072239";
   ctx.beginPath();
-  ctx.arc(radius * 0.44, -radius * 0.12, Math.max(1.2, radius * 0.045), 0, Math.PI * 2);
+  ctx.arc(radius * 0.42, -radius * 0.12, Math.max(1.5, radius * 0.05), 0, Math.PI * 2);
   ctx.fill();
 
-  if (self) {
+  if (isSelf) {
     ctx.strokeStyle = "rgba(255,255,255,0.4)";
     ctx.lineWidth = 2;
     ctx.beginPath();
@@ -879,8 +451,7 @@ function drawFish(entity, self) {
   }
 
   ctx.restore();
-
-  ctx.fillStyle = "rgba(240,250,255,0.96)";
+  ctx.fillStyle = "rgba(240, 250, 255, 0.95)";
   ctx.font = '600 13px "Bahnschrift", "Trebuchet MS", sans-serif';
   ctx.textAlign = "center";
   ctx.fillText(entity.name, point.x, point.y - radius - 14);
@@ -888,7 +459,7 @@ function drawFish(entity, self) {
 
 function drawBounds() {
   const topLeft = worldToScreen(0, 0);
-  const bottomRight = worldToScreen(WORLD.width, WORLD.height);
+  const bottomRight = worldToScreen(state.config.world.width, state.config.world.height);
   ctx.save();
   ctx.strokeStyle = "rgba(255,255,255,0.12)";
   ctx.lineWidth = 4;
@@ -896,12 +467,12 @@ function drawBounds() {
   ctx.restore();
 }
 
-function drawDeathOverlay(self) {
+function drawOverlay(self) {
   if (!self || self.alive) {
     return;
   }
 
-  const seconds = Math.max(0, Math.ceil((self.respawnAt - performance.now()) / 1000));
+  const seconds = Math.max(0, Math.ceil((self.respawnAt - Date.now()) / 1000));
   ctx.save();
   ctx.fillStyle = "rgba(3, 8, 18, 0.42)";
   ctx.fillRect(0, 0, window.innerWidth, window.innerHeight);
@@ -914,110 +485,105 @@ function drawDeathOverlay(self) {
   ctx.restore();
 }
 
-function render(now) {
-  const delta = Math.min(50, now - runtime.lastFrame);
-  runtime.lastFrame = now;
-  runtime.accumulator += delta;
-
-  if (runtime.joined && channel && !runtime.isHost && now - runtime.lastHostCheckAt > 1200) {
-    runtime.lastHostCheckAt = now;
-    evaluateHost();
-  }
-
-  syncInput(now);
-
-  while (runtime.accumulator >= TICK_MS) {
-    runtime.accumulator -= TICK_MS;
-    if (runtime.joined && (runtime.isHost || !channel)) {
-      hostStep(now, TICK_MS / 1000);
-    } else if (runtime.joined && now - runtime.lastPresenceAt > HEARTBEAT_MS) {
-      broadcastPresence();
-    }
-  }
-
-  const self = getSelfFromSnapshot();
-  applyUnlockProgress(self);
-  updateHud(self);
-
-  if (self) {
-    const targetZoom = Math.max(0.4, Math.min(0.95, 1.15 - self.radius / 150));
-    runtime.camera.x += (self.x - runtime.camera.x) * 0.14;
-    runtime.camera.y += (self.y - runtime.camera.y) * 0.14;
-    runtime.camera.zoom += (targetZoom - runtime.camera.zoom) * 0.08;
-  }
+function renderFrame(now) {
+  const dt = Math.min(0.05, (now - state.lastFrame) / 1000);
+  state.lastFrame = now;
 
   ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
   drawBackground();
 
-  if (runtime.snapshot) {
+  if (state.snapshot?.self) {
+    const self = state.snapshot.self;
+    const targetZoom = Math.max(0.33, Math.min(0.9, 1.15 - self.radius / 160));
+    state.camera.x += (self.x - state.camera.x) * Math.min(1, dt * 6);
+    state.camera.y += (self.y - state.camera.y) * Math.min(1, dt * 6);
+    state.camera.zoom += (targetZoom - state.camera.zoom) * Math.min(1, dt * 4);
+
     drawBounds();
-    for (const food of runtime.snapshot.foods) drawFood(food);
-    for (const bot of runtime.snapshot.bots) drawFish(bot, false);
-    for (const player of runtime.snapshot.players) {
-      if (player.id !== runtime.tabId) {
-        drawFish(player, false);
-      }
-    }
-    if (self) {
-      drawFish(self, true);
-      drawDeathOverlay(self);
-    }
+    for (const food of state.snapshot.foods) drawFood(food);
+    for (const bot of state.snapshot.bots) drawFish(bot);
+    for (const player of state.snapshot.players) drawFish(player);
+    drawFish(self, true);
+    drawOverlay(self);
   }
 
-  requestAnimationFrame(render);
+  requestAnimationFrame(renderFrame);
 }
 
-joinForm.addEventListener("submit", (event) => {
+joinForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  if (runtime.joined) {
-    return;
+  const name = nameInput.value.trim() || "Shoal Scout";
+  const roomId = sanitizeRoomId(roomInput.value) || state.roomId || randomRoomId();
+  roomInput.value = roomId;
+
+  try {
+    await connect(name, roomId);
+  } catch (error) {
+    showToast(error.message);
   }
-  joinGame(nameInput.value.trim());
 });
 
-window.addEventListener("resize", resize);
+unlockToggle.addEventListener("click", () => {
+  setUnlockPanelOpen(!state.unlockPanelOpen);
+});
+
+closeUnlocksButton.addEventListener("click", () => {
+  setUnlockPanelOpen(false);
+});
+
+copyInviteButton.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(shareInput.value);
+    showToast("Invite link copied");
+  } catch (error) {
+    showToast("Could not copy link");
+  }
+});
+
+canvas.addEventListener("mousemove", (event) => {
+  state.pointer.x = event.clientX;
+  state.pointer.y = event.clientY;
+  state.pointer.active = true;
+});
+
+canvas.addEventListener("mouseleave", () => {
+  state.pointer.active = false;
+});
+
 window.addEventListener("keydown", (event) => {
   if (["KeyW", "KeyA", "KeyS", "KeyD", "Space", "ShiftLeft", "ShiftRight"].includes(event.code)) {
-    runtime.keys.add(event.code);
+    state.keys.add(event.code);
     if (event.code === "Space") {
       event.preventDefault();
     }
   }
 });
-window.addEventListener("keyup", (event) => runtime.keys.delete(event.code));
 
-canvas.addEventListener("mousemove", (event) => {
-  runtime.pointer.x = event.clientX;
-  runtime.pointer.y = event.clientY;
-  runtime.pointer.active = true;
+window.addEventListener("keyup", (event) => {
+  state.keys.delete(event.code);
 });
-canvas.addEventListener("mouseleave", () => {
-  runtime.pointer.active = false;
-});
-canvas.addEventListener("touchstart", (event) => {
-  const touch = event.touches[0];
-  if (!touch) return;
-  runtime.pointer.x = touch.clientX;
-  runtime.pointer.y = touch.clientY;
-  runtime.pointer.active = true;
-}, { passive: true });
-canvas.addEventListener("touchmove", (event) => {
-  const touch = event.touches[0];
-  if (!touch) return;
-  runtime.pointer.x = touch.clientX;
-  runtime.pointer.y = touch.clientY;
-  runtime.pointer.active = true;
-}, { passive: true });
-canvas.addEventListener("touchend", () => {
-  runtime.pointer.active = false;
-}, { passive: true });
 
-window.addEventListener("beforeunload", () => {
-  if (channel && runtime.joined) {
-    channel.postMessage({ type: "leave", id: runtime.tabId });
+window.addEventListener("resize", () => {
+  resize();
+  if (window.innerWidth > 980 && !state.connected) {
+    setUnlockPanelOpen(true);
   }
 });
 
-resize();
-renderSpeciesCards();
-requestAnimationFrame(render);
+Promise.resolve()
+  .then(loadConfig)
+  .then(() => {
+    renderSpeciesCards(true);
+    if (state.roomId) {
+      roomInput.value = state.roomId;
+    }
+  })
+  .catch((error) => {
+    showToast(error.message);
+  })
+  .finally(() => {
+    resize();
+    setInterval(pollState, 120);
+    setInterval(sendInput, 80);
+    requestAnimationFrame(renderFrame);
+  });

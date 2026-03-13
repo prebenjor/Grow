@@ -1,14 +1,13 @@
 :root {
-  --bg-top: #5cc1d8;
-  --bg-mid: #12557f;
-  --bg-deep: #031424;
-  --panel: rgba(3, 15, 28, 0.74);
-  --panel-border: rgba(188, 236, 255, 0.18);
-  --text: #eef7ff;
-  --muted: #9bcfdf;
-  --accent: #ffd162;
-  --accent-2: #6cf0cc;
-  --danger: #ff8a7a;
+  --bg-deep: #041528;
+  --bg-mid: #0f3556;
+  --bg-surf: #2d7ca6;
+  --panel: rgba(5, 15, 29, 0.76);
+  --panel-border: rgba(183, 236, 255, 0.18);
+  --text: #eef8ff;
+  --muted: #9fd0df;
+  --accent: #f6c555;
+  --accent-2: #6ae9d0;
   --shadow: 0 24px 60px rgba(0, 0, 0, 0.28);
 }
 
@@ -21,35 +20,35 @@ body {
   margin: 0;
   min-height: 100%;
   overflow: hidden;
+  background:
+    radial-gradient(circle at top, rgba(116, 216, 255, 0.2), transparent 28%),
+    radial-gradient(circle at 15% 30%, rgba(100, 177, 255, 0.14), transparent 20%),
+    linear-gradient(180deg, var(--bg-surf), var(--bg-mid) 34%, var(--bg-deep));
   color: var(--text);
   font-family: "Bahnschrift", "Trebuchet MS", sans-serif;
-  background:
-    radial-gradient(circle at top, rgba(117, 219, 255, 0.2), transparent 24%),
-    radial-gradient(circle at 16% 22%, rgba(91, 177, 255, 0.14), transparent 18%),
-    linear-gradient(180deg, var(--bg-top), var(--bg-mid) 34%, var(--bg-deep));
 }
 
 body::before,
 body::after {
   content: "";
   position: fixed;
-  width: 34vmax;
-  height: 34vmax;
+  width: 38vmax;
+  height: 38vmax;
   border-radius: 50%;
-  filter: blur(28px);
+  filter: blur(24px);
   pointer-events: none;
 }
 
 body::before {
   top: -8vmax;
   right: -10vmax;
-  background: rgba(105, 197, 255, 0.14);
+  background: rgba(104, 192, 255, 0.14);
 }
 
 body::after {
-  bottom: -14vmax;
-  left: -10vmax;
-  background: rgba(82, 255, 219, 0.08);
+  bottom: -16vmax;
+  left: -12vmax;
+  background: rgba(69, 255, 212, 0.08);
 }
 
 #game {
@@ -62,22 +61,22 @@ body::after {
 .layout {
   position: fixed;
   inset: 0;
-  display: grid;
-  grid-template-columns: minmax(290px, 420px) minmax(260px, 390px);
-  grid-template-rows: auto auto;
-  gap: 18px;
   padding: 20px;
-  align-content: start;
   pointer-events: none;
 }
 
 .panel {
   pointer-events: auto;
-  border-radius: 24px;
   border: 1px solid var(--panel-border);
   background: var(--panel);
-  backdrop-filter: blur(18px);
   box-shadow: var(--shadow);
+  backdrop-filter: blur(18px);
+  border-radius: 24px;
+}
+
+.hero,
+.hud {
+  max-width: 430px;
 }
 
 .hero {
@@ -87,19 +86,10 @@ body::after {
 .hero h1,
 .unlocks h2 {
   margin: 0;
-  line-height: 0.92;
-  letter-spacing: -0.04em;
-  font-size: clamp(2rem, 4vw, 3.7rem);
   font-family: "Impact", "Haettenschweiler", "Arial Narrow Bold", sans-serif;
-}
-
-.eyebrow {
-  margin: 0 0 10px;
-  color: var(--accent-2);
-  text-transform: uppercase;
-  letter-spacing: 0.22em;
-  font-size: 0.75rem;
-  font-weight: 700;
+  font-size: clamp(2rem, 4vw, 3.8rem);
+  line-height: 0.95;
+  letter-spacing: -0.04em;
 }
 
 .subtitle,
@@ -114,10 +104,23 @@ body::after {
   line-height: 1.45;
 }
 
-form {
+.eyebrow {
+  margin: 0 0 10px;
+  color: var(--accent-2);
+  text-transform: uppercase;
+  letter-spacing: 0.22em;
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+form,
+.share {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
+}
+
+form {
   margin-bottom: 12px;
 }
 
@@ -129,6 +132,7 @@ label {
 
 label span {
   font-size: 0.85rem;
+  color: var(--muted);
 }
 
 input {
@@ -144,7 +148,7 @@ input {
 button {
   border: 0;
   border-radius: 16px;
-  background: linear-gradient(135deg, #ffd96e, #ff9266);
+  background: linear-gradient(135deg, #ffd76b, #ff9366);
   color: #102131;
   font: inherit;
   font-weight: 800;
@@ -153,10 +157,25 @@ button {
   cursor: pointer;
 }
 
+.unlock-toggle {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  z-index: 30;
+  box-shadow: var(--shadow);
+}
+
+.close-button {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text);
+  padding: 10px 14px;
+}
+
 .hud {
-  grid-column: 1 / span 2;
+  position: fixed;
+  top: 20px;
+  left: 20px;
   display: grid;
-  grid-template-columns: 1fr minmax(200px, 280px);
   gap: 16px;
   padding: 18px 20px;
 }
@@ -168,7 +187,8 @@ button {
 }
 
 .stats div,
-.leaderboard {
+.leaderboard,
+.share {
   padding: 12px 14px;
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.05);
@@ -182,23 +202,19 @@ button {
 
 .stats strong,
 .leaderboard strong {
-  font-size: 1.15rem;
+  font-size: 1.1rem;
 }
 
-.leaderboard-head {
+.leaderboard-header,
+.unlocks-header {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  align-items: center;
-  margin-bottom: 10px;
-}
-
-.leaderboard span {
-  color: var(--muted);
+  align-items: start;
 }
 
 .leaderboard ol {
-  margin: 0;
+  margin: 12px 0 0;
   padding-left: 18px;
   display: grid;
   gap: 6px;
@@ -210,18 +226,32 @@ button {
   gap: 10px;
 }
 
-.unlocks {
-  grid-column: 2;
-  grid-row: 1 / span 2;
-  padding: 20px;
+.share input {
+  padding-right: 10px;
 }
 
-.section-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
-  align-items: start;
-  margin-bottom: 18px;
+.share button {
+  min-width: 92px;
+}
+
+.unlocks {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  width: min(420px, calc(100vw - 40px));
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  padding: 20px;
+  transform: translateX(calc(100% + 28px));
+  transition: transform 180ms ease;
+}
+
+body.unlocks-open .unlocks {
+  transform: translateX(0);
+}
+
+.unlocks-hint {
+  margin: 12px 0 18px;
 }
 
 .species-grid {
@@ -239,12 +269,12 @@ button {
 }
 
 .species-card.selected {
-  border-color: rgba(255, 217, 110, 0.75);
-  box-shadow: 0 0 0 1px rgba(255, 217, 110, 0.35) inset;
+  border-color: rgba(255, 221, 107, 0.7);
+  box-shadow: 0 0 0 1px rgba(255, 221, 107, 0.3) inset;
 }
 
 .species-card.locked {
-  opacity: 0.55;
+  opacity: 0.58;
 }
 
 .species-card header,
@@ -283,9 +313,10 @@ button {
   padding: 12px 18px;
   border-radius: 999px;
   background: rgba(2, 16, 30, 0.9);
-  border: 1px solid rgba(255, 217, 110, 0.34);
+  border: 1px solid rgba(255, 221, 107, 0.34);
   box-shadow: var(--shadow);
   font-weight: 700;
+  z-index: 40;
 }
 
 .hidden {
@@ -293,22 +324,18 @@ button {
 }
 
 @media (max-width: 980px) {
-  .layout {
-    grid-template-columns: 1fr;
-    grid-template-rows: auto auto auto;
-  }
-
-  .hud,
-  .unlocks {
-    grid-column: auto;
-    grid-row: auto;
-  }
-
   .hud {
-    grid-template-columns: 1fr;
+    right: 20px;
+    max-width: calc(100vw - 40px);
   }
 
   .stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .unlocks {
+    top: auto;
+    bottom: 20px;
+    max-height: min(70vh, 620px);
   }
 }

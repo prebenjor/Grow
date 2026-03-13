@@ -1,6 +1,6 @@
 # Grow
 
-Static fish growth game prepared for GitHub Pages.
+Real multiplayer fish growth game with room links.
 
 ## Run locally
 
@@ -10,12 +10,12 @@ npm start
 
 Then open `http://localhost:3000`.
 
-## Deploy on GitHub Pages
+## Deploy
 
-1. Push the repo to the `main` branch.
-2. In GitHub, open `Settings` -> `Pages`.
-3. Set `Build and deployment` to `GitHub Actions`.
-4. The included workflow in `.github/workflows/pages.yml` will publish the site.
+This version needs a Node host because the game state lives on the server.
+
+- `Render`: the repo includes `render.yaml` for a basic web service setup
+- `Railway` / `Fly.io` / any other Node host: run `npm start`
 
 ## Controls
 
@@ -24,7 +24,6 @@ Then open `http://localhost:3000`.
 
 ## Notes
 
-- The game now runs fully in the browser for better performance.
-- Multiplayer on GitHub Pages works across tabs in the same browser via `BroadcastChannel`.
+- Share `/?room=your-room-id` so another player joins the same ocean.
 - Unlocks are stored in `localStorage`.
-- Deployment touch-up: March 13, 2026.
+- GitHub Pages can still serve the static files, but real shared multiplayer requires the Node server.
