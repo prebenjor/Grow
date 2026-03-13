@@ -27,3 +27,4 @@ Then open `http://localhost:3000`.
 - The game now runs fully in the browser for better performance.
 - Multiplayer on GitHub Pages works across tabs in the same browser via `BroadcastChannel`.
 - Unlocks are stored in `localStorage`.
+- Deployment touch-up: March 13, 2026.
