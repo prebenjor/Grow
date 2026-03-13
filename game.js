@@ -134,6 +134,10 @@ function randomRoomId() {
   return Math.random().toString(36).slice(2, 8);
 }
 
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
 function getSpecies(speciesId) {
   return state.species.find((entry) => entry.id === speciesId) || state.species[0];
 }
