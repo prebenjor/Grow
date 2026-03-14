@@ -25,7 +25,6 @@ const toast = document.getElementById("toast");
 
 const PROFILE_CACHE_KEY = "grow-profile-cache";
 const LEGACY_PROFILE_KEY = "grow-profile";
-const MIGRATION_KEY_PREFIX = "grow-migrated:";
 const CLIENT_ID = localStorage.getItem("grow-client-id") || crypto.randomUUID();
 
 localStorage.setItem("grow-client-id", CLIENT_ID);
@@ -86,22 +85,6 @@ function loadCachedProfile() {
     };
   } catch (error) {
     return createDefaultProfile();
-  }
-}
-
-function loadLegacyProfile() {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(LEGACY_PROFILE_KEY) || "");
-    return {
-      ...createDefaultProfile(),
-      ...parsed,
-      unlockedSpecies: Array.isArray(parsed.unlockedSpecies) ? parsed.unlockedSpecies : ["sprout"],
-      ownedVariants: parsed.ownedVariants && typeof parsed.ownedVariants === "object" ? parsed.ownedVariants : {},
-      selectedVariants: parsed.selectedVariants && typeof parsed.selectedVariants === "object" ? parsed.selectedVariants : {},
-      upgrades: parsed.upgrades && typeof parsed.upgrades === "object" ? parsed.upgrades : {}
-    };
-  } catch (error) {
-    return null;
   }
 }
 
@@ -354,37 +337,29 @@ async function bootstrapProfile() {
     const payload = await request(`/api/profile?token=${encodeURIComponent(state.token)}`);
     applyProfile(payload.profile);
   } catch (error) {
-    localStorage.removeItem("grow-token");
-    state.token = "";
+    if (!/Profile not found/i.test(error.message)) {
+      throw error;
+    }
   }
 }
 
-async function migrateLegacyProfileIfNeeded() {
+async function restoreCachedProfile(cachedProfile) {
   if (!state.token) {
-    return;
+    return false;
   }
 
-  const markerKey = `${MIGRATION_KEY_PREFIX}${state.token}`;
-  if (localStorage.getItem(markerKey) === "1") {
-    return;
-  }
-
-  const legacy = loadLegacyProfile();
-  if (!legacy) {
-    localStorage.setItem(markerKey, "1");
-    return;
-  }
+  const profileToRestore = cachedProfile || loadCachedProfile();
 
   const payload = await request("/api/profile/migrate", {
     method: "POST",
     body: JSON.stringify({
       token: state.token,
-      profile: legacy
+      profile: profileToRestore
     })
   });
 
-  localStorage.setItem(markerKey, "1");
   applyProfile(payload.profile);
+  return true;
 }
 
 function variantDiscoveryCost(species) {
@@ -634,6 +609,7 @@ function renderSpeciesCards(force = false) {
 }
 
 async function connect(name, roomId) {
+  const cachedProfile = loadCachedProfile();
   const loadout = currentLoadout();
   const payload = await request("/api/join", {
     method: "POST",
@@ -656,7 +632,7 @@ async function connect(name, roomId) {
 
   localStorage.setItem("grow-token", state.token);
   applyProfile(payload.profile);
-  await migrateLegacyProfileIfNeeded();
+  await restoreCachedProfile(cachedProfile);
 
   joinPanel.classList.add("hidden");
   hudPanel.classList.remove("hidden");

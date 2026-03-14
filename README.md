@@ -35,5 +35,5 @@ This version needs a Node host because both the game state and player progressio
 - Share `/?room=your-room-id` so another player joins the same ocean.
 - The live game runs over WebSockets with an authoritative Node simulation.
 - Pearls, variants, upgrades, and best score are stored server-side in `profiles.json` or the directory configured by `DATA_DIR`.
-- A one-time migration imports the old local `grow-profile` cache the first time a returning player joins.
+- On free-tier hosting, the browser cache can automatically repopulate the server profile after a restart or redeploy.
 - GitHub Pages can still serve static files, but real shared multiplayer requires the Node server.
