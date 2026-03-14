@@ -34,6 +34,11 @@ const state = {
   token: localStorage.getItem("grow-token") || "",
   roomId: new URLSearchParams(window.location.search).get("room") || "",
   snapshot: null,
+  rendered: {
+    self: null,
+    players: new Map(),
+    bots: new Map()
+  },
   connected: false,
   config: null,
   species: [],
@@ -158,6 +163,69 @@ function randomRoomId() {
 
 function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
+}
+
+function lerp(from, to, amount) {
+  return from + (to - from) * amount;
+}
+
+function cloneEntity(entity) {
+  return entity ? { ...entity } : null;
+}
+
+function smoothEntity(current, target, dt, tuning = {}) {
+  if (!current || !target) {
+    return cloneEntity(target);
+  }
+
+  const positionRate = tuning.positionRate || 16;
+  const velocityRate = tuning.velocityRate || 14;
+  const scalarRate = tuning.scalarRate || 12;
+  const positionStep = Math.min(1, dt * positionRate);
+  const velocityStep = Math.min(1, dt * velocityRate);
+  const scalarStep = Math.min(1, dt * scalarRate);
+
+  current.x += current.vx * dt;
+  current.y += current.vy * dt;
+  current.x = lerp(current.x, target.x, positionStep);
+  current.y = lerp(current.y, target.y, positionStep);
+  current.vx = lerp(current.vx, target.vx, velocityStep);
+  current.vy = lerp(current.vy, target.vy, velocityStep);
+  current.radius = lerp(current.radius, target.radius, scalarStep);
+  current.mass = lerp(current.mass, target.mass, scalarStep);
+  current.score = lerp(current.score || 0, target.score || 0, scalarStep);
+
+  current.name = target.name;
+  current.speciesId = target.speciesId;
+  current.variantId = target.variantId;
+  current.color = target.color;
+  current.accent = target.accent;
+  current.rarity = target.rarity;
+  current.upgradeLevel = target.upgradeLevel;
+  current.alive = target.alive;
+  current.respawnAt = target.respawnAt;
+  current.defeatedBy = target.defeatedBy;
+  current.streak = target.streak;
+  current.bestScore = target.bestScore;
+
+  return current;
+}
+
+function smoothEntityMap(currentMap, targets, keyName, dt, tuning) {
+  const nextMap = new Map();
+  const rendered = [];
+
+  for (const target of targets) {
+    const key = target[keyName];
+    const current = smoothEntity(currentMap.get(key), target, dt, tuning);
+    nextMap.set(key, current);
+    rendered.push(current);
+  }
+
+  return {
+    map: nextMap,
+    rendered
+  };
 }
 
 function getSpecies(speciesId) {
@@ -438,6 +506,9 @@ function openSocket() {
       state.socket = null;
       state.socketReady = false;
       state.connected = false;
+      state.rendered.self = null;
+      state.rendered.players = new Map();
+      state.rendered.bots = new Map();
       statusLabel.textContent = "Reconnecting";
       scheduleReconnect();
     }
@@ -579,6 +650,9 @@ async function connect(name, roomId) {
   state.species = payload.species;
   state.rarities = payload.rarities;
   state.maxUpgradeLevel = payload.maxUpgradeLevel;
+  state.rendered.self = null;
+  state.rendered.players = new Map();
+  state.rendered.bots = new Map();
 
   localStorage.setItem("grow-token", state.token);
   applyProfile(payload.profile);
@@ -812,7 +886,26 @@ function renderFrame(now) {
   drawBackground();
 
   if (state.snapshot?.self) {
-    const self = state.snapshot.self;
+    state.rendered.self = smoothEntity(state.rendered.self, state.snapshot.self, dt, {
+      positionRate: 22,
+      velocityRate: 18,
+      scalarRate: 14
+    });
+    const smoothedPlayers = smoothEntityMap(state.rendered.players, state.snapshot.players, "token", dt, {
+      positionRate: 14,
+      velocityRate: 12,
+      scalarRate: 10
+    });
+    const smoothedBots = smoothEntityMap(state.rendered.bots, state.snapshot.bots, "id", dt, {
+      positionRate: 13,
+      velocityRate: 11,
+      scalarRate: 10
+    });
+
+    state.rendered.players = smoothedPlayers.map;
+    state.rendered.bots = smoothedBots.map;
+
+    const self = state.rendered.self;
     const targetZoom = Math.max(0.33, Math.min(0.9, 1.15 - self.radius / 160));
     state.camera.x += (self.x - state.camera.x) * Math.min(1, dt * 6);
     state.camera.y += (self.y - state.camera.y) * Math.min(1, dt * 6);
@@ -820,8 +913,8 @@ function renderFrame(now) {
 
     drawBounds();
     for (const food of state.snapshot.foods) drawFood(food);
-    for (const bot of state.snapshot.bots) drawFish(bot);
-    for (const player of state.snapshot.players) drawFish(player);
+    for (const bot of smoothedBots.rendered) drawFish(bot);
+    for (const player of smoothedPlayers.rendered) drawFish(player);
     drawFish(self, true);
     drawOverlay(self);
   }

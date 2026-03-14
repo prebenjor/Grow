@@ -12,7 +12,7 @@ const PROFILES_FILE = path.join(DATA_DIR, "profiles.json");
 
 const WORLD = { width: 4800, height: 3000 };
 const TICK_MS = 50;
-const SNAPSHOT_MS = 100;
+const SNAPSHOT_MS = 50;
 const START_MASS = 24;
 const MAX_FOOD = 180;
 const MAX_BOTS = 22;
@@ -1188,7 +1188,7 @@ async function handleRequest(req, res) {
 
       let token = typeof body.token === "string" ? body.token : "";
       let player = token ? playerSessions.get(token) : null;
-      if (!token || !profiles.has(token)) {
+      if (!token) {
         token = crypto.randomUUID();
       }
 
