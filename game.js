@@ -26,6 +26,7 @@ const toast = document.getElementById("toast");
 const PROFILE_CACHE_KEY = "grow-profile-cache";
 const LEGACY_PROFILE_KEY = "grow-profile";
 const CLIENT_ID = localStorage.getItem("grow-client-id") || crypto.randomUUID();
+const START_MASS = 24;
 
 localStorage.setItem("grow-client-id", CLIENT_ID);
 
@@ -209,6 +210,95 @@ function smoothEntityMap(currentMap, targets, keyName, dt, tuning) {
     map: nextMap,
     rendered
   };
+}
+
+function startingMassFor(entity) {
+  return START_MASS + (entity.upgradeLevel || 0) * 2;
+}
+
+function massToRadius(mass) {
+  return 7 + Math.sqrt(mass) * 3.1;
+}
+
+function getMoveStats(entity) {
+  const species = getSpecies(entity.speciesId);
+  const sizePenalty = clamp((entity.mass - START_MASS) * 0.18, 0, 125);
+  return {
+    maxSpeed: Math.max(78, species.speed + (entity.upgradeLevel || 0) * 4 - sizePenalty),
+    accel: species.accel + (entity.upgradeLevel || 0) * 10,
+    boostCost: Math.max(0.03, species.boostCost - (entity.upgradeLevel || 0) * 0.004)
+  };
+}
+
+function predictMovement(entity, input, dt) {
+  const length = Math.hypot(input.x, input.y);
+  const desired = length ? { x: input.x / length, y: input.y / length } : { x: 0, y: 0 };
+  const stats = getMoveStats(entity);
+
+  entity.vx += desired.x * stats.accel * dt;
+  entity.vy += desired.y * stats.accel * dt;
+
+  if (input.boost && entity.mass > startingMassFor(entity) + 5) {
+    entity.vx += desired.x * stats.accel * 0.8 * dt;
+    entity.vy += desired.y * stats.accel * 0.8 * dt;
+    entity.mass = Math.max(startingMassFor(entity), entity.mass - stats.boostCost);
+    entity.radius = massToRadius(entity.mass);
+  }
+
+  const drag = Math.pow(0.91, dt * 60);
+  entity.vx *= drag;
+  entity.vy *= drag;
+
+  const speed = Math.hypot(entity.vx, entity.vy);
+  const cap = stats.maxSpeed * (input.boost ? 1.16 : 1);
+  if (speed > cap) {
+    entity.vx = (entity.vx / speed) * cap;
+    entity.vy = (entity.vy / speed) * cap;
+  }
+
+  const world = state.config?.world || { width: 4800, height: 3000 };
+  entity.x = clamp(entity.x + entity.vx * dt, entity.radius, world.width - entity.radius);
+  entity.y = clamp(entity.y + entity.vy * dt, entity.radius, world.height - entity.radius);
+}
+
+function predictSelfEntity(current, target, dt) {
+  if (!current || !target) {
+    return cloneEntity(target);
+  }
+
+  if (!target.alive) {
+    return smoothEntity(current, target, dt, {
+      positionRate: 20,
+      velocityRate: 18,
+      scalarRate: 14
+    });
+  }
+
+  predictMovement(current, currentInput(), dt);
+
+  const distanceError = Math.hypot(target.x - current.x, target.y - current.y);
+  const correction = distanceError > 180 ? 0.45 : distanceError > 90 ? 0.22 : 0.12;
+  current.x = lerp(current.x, target.x, correction);
+  current.y = lerp(current.y, target.y, correction);
+  current.vx = lerp(current.vx, target.vx, Math.min(1, dt * 10));
+  current.vy = lerp(current.vy, target.vy, Math.min(1, dt * 10));
+  current.radius = lerp(current.radius, target.radius, Math.min(1, dt * 12));
+  current.mass = lerp(current.mass, target.mass, Math.min(1, dt * 12));
+  current.score = lerp(current.score || 0, target.score || 0, Math.min(1, dt * 8));
+  current.name = target.name;
+  current.speciesId = target.speciesId;
+  current.variantId = target.variantId;
+  current.color = target.color;
+  current.accent = target.accent;
+  current.rarity = target.rarity;
+  current.upgradeLevel = target.upgradeLevel;
+  current.alive = target.alive;
+  current.respawnAt = target.respawnAt;
+  current.defeatedBy = target.defeatedBy;
+  current.streak = target.streak;
+  current.bestScore = target.bestScore;
+
+  return current;
 }
 
 function getSpecies(speciesId) {
@@ -769,6 +859,153 @@ function drawFood(food) {
   ctx.fill();
 }
 
+function drawSpeciesBody(speciesId, radius, bodyGradient, bodyColor, accentColor) {
+  if (speciesId === "reefglider") {
+    ctx.fillStyle = accentColor;
+    ctx.beginPath();
+    ctx.moveTo(-radius * 0.4, 0);
+    ctx.quadraticCurveTo(-radius * 1.1, radius * 1.05, radius * 0.1, radius * 0.7);
+    ctx.quadraticCurveTo(radius * 1.05, radius * 0.28, radius * 1.45, 0);
+    ctx.quadraticCurveTo(radius * 1.05, -radius * 0.28, radius * 0.1, -radius * 0.7);
+    ctx.quadraticCurveTo(-radius * 1.1, -radius * 1.05, -radius * 0.4, 0);
+    ctx.fill();
+
+    ctx.fillStyle = bodyGradient;
+    ctx.beginPath();
+    ctx.ellipse(radius * 0.15, 0, radius * 1.25, radius * 0.62, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = bodyColor;
+    ctx.beginPath();
+    ctx.moveTo(-radius * 1.1, 0);
+    ctx.lineTo(-radius * 1.8, radius * 0.24);
+    ctx.lineTo(-radius * 1.8, -radius * 0.24);
+    ctx.closePath();
+    ctx.fill();
+    return;
+  }
+
+  if (speciesId === "puffer") {
+    ctx.fillStyle = bodyGradient;
+    ctx.beginPath();
+    ctx.arc(0, 0, radius * 0.98, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = accentColor;
+    ctx.lineWidth = Math.max(1.2, radius * 0.12);
+    for (let index = 0; index < 14; index += 1) {
+      const spikeAngle = (Math.PI * 2 * index) / 14;
+      const inner = radius * 0.88;
+      const outer = radius * 1.18;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(spikeAngle) * inner, Math.sin(spikeAngle) * inner);
+      ctx.lineTo(Math.cos(spikeAngle) * outer, Math.sin(spikeAngle) * outer);
+      ctx.stroke();
+    }
+
+    ctx.fillStyle = bodyColor;
+    ctx.beginPath();
+    ctx.moveTo(-radius * 0.95, 0);
+    ctx.lineTo(-radius * 1.45, radius * 0.34);
+    ctx.lineTo(-radius * 1.45, -radius * 0.34);
+    ctx.closePath();
+    ctx.fill();
+    return;
+  }
+
+  if (speciesId === "abyssal") {
+    ctx.fillStyle = bodyGradient;
+    ctx.beginPath();
+    ctx.moveTo(-radius * 1.35, 0);
+    ctx.quadraticCurveTo(-radius * 0.55, radius * 0.85, radius * 1.2, radius * 0.42);
+    ctx.lineTo(radius * 1.62, 0);
+    ctx.lineTo(radius * 1.2, -radius * 0.42);
+    ctx.quadraticCurveTo(-radius * 0.55, -radius * 0.85, -radius * 1.35, 0);
+    ctx.fill();
+
+    ctx.fillStyle = bodyColor;
+    ctx.beginPath();
+    ctx.moveTo(-radius * 1.2, 0);
+    ctx.lineTo(-radius * 2.05, radius * 0.58);
+    ctx.lineTo(-radius * 1.72, 0);
+    ctx.lineTo(-radius * 2.05, -radius * 0.58);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = accentColor;
+    ctx.beginPath();
+    ctx.moveTo(radius * 0.55, 0);
+    ctx.lineTo(radius * 1.32, radius * 0.12);
+    ctx.lineTo(radius * 1.32, -radius * 0.12);
+    ctx.closePath();
+    ctx.fill();
+    return;
+  }
+
+  if (speciesId === "dartfin") {
+    ctx.fillStyle = bodyGradient;
+    ctx.beginPath();
+    ctx.ellipse(radius * 0.08, 0, radius * 1.36, radius * 0.62, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = bodyColor;
+    ctx.beginPath();
+    ctx.moveTo(-radius * 1.22, 0);
+    ctx.lineTo(-radius * 2.05, radius * 0.72);
+    ctx.lineTo(-radius * 1.6, 0);
+    ctx.lineTo(-radius * 2.05, -radius * 0.72);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = accentColor;
+    ctx.beginPath();
+    ctx.moveTo(-radius * 0.15, -radius * 0.18);
+    ctx.lineTo(radius * 0.2, -radius * 0.95);
+    ctx.lineTo(radius * 0.62, -radius * 0.14);
+    ctx.closePath();
+    ctx.fill();
+    return;
+  }
+
+  if (speciesId === "sprout") {
+    ctx.fillStyle = bodyGradient;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, radius * 1.05, radius * 0.56, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = bodyColor;
+    ctx.beginPath();
+    ctx.moveTo(-radius * 0.95, 0);
+    ctx.lineTo(-radius * 1.68, radius * 0.48);
+    ctx.lineTo(-radius * 1.42, 0);
+    ctx.lineTo(-radius * 1.68, -radius * 0.48);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = accentColor;
+    ctx.beginPath();
+    ctx.moveTo(-radius * 0.05, -radius * 0.12);
+    ctx.lineTo(radius * 0.25, -radius * 0.72);
+    ctx.lineTo(radius * 0.58, -radius * 0.04);
+    ctx.closePath();
+    ctx.fill();
+    return;
+  }
+
+  ctx.fillStyle = bodyGradient;
+  ctx.beginPath();
+  ctx.ellipse(0, 0, radius * 1.2, radius * 0.78, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.fillStyle = bodyColor;
+  ctx.beginPath();
+  ctx.moveTo(-radius * 1.15, 0);
+  ctx.lineTo(-radius * 1.9, radius * 0.72);
+  ctx.lineTo(-radius * 1.9, -radius * 0.72);
+  ctx.closePath();
+  ctx.fill();
+}
+
 function drawFish(entity, isSelf = false) {
   const species = getSpecies(entity.speciesId);
   const point = worldToScreen(entity.x, entity.y);
@@ -790,23 +1027,12 @@ function drawFish(entity, isSelf = false) {
   bodyGradient.addColorStop(0, accentColor);
   bodyGradient.addColorStop(1, bodyColor);
 
-  ctx.fillStyle = bodyGradient;
-  ctx.beginPath();
-  ctx.ellipse(0, 0, radius * 1.2, radius * 0.78, 0, 0, Math.PI * 2);
-  ctx.fill();
-
-  ctx.fillStyle = bodyColor;
-  ctx.beginPath();
-  ctx.moveTo(-radius * 1.15, 0);
-  ctx.lineTo(-radius * 1.9, radius * 0.72);
-  ctx.lineTo(-radius * 1.9, -radius * 0.72);
-  ctx.closePath();
-  ctx.fill();
+  drawSpeciesBody(species.id, radius, bodyGradient, bodyColor, accentColor);
 
   ctx.strokeStyle = rarity.ring;
   ctx.lineWidth = isSelf ? 2.5 : 1.5;
   ctx.beginPath();
-  ctx.ellipse(0, 0, radius * 1.3, radius * 0.9, 0, 0, Math.PI * 2);
+  ctx.ellipse(0.05 * radius, 0, radius * (species.id === "puffer" ? 1.12 : 1.3), radius * (species.id === "sprout" ? 0.72 : 0.9), 0, 0, Math.PI * 2);
   ctx.stroke();
 
   ctx.fillStyle = "rgba(255,255,255,0.85)";
@@ -862,11 +1088,7 @@ function renderFrame(now) {
   drawBackground();
 
   if (state.snapshot?.self) {
-    state.rendered.self = smoothEntity(state.rendered.self, state.snapshot.self, dt, {
-      positionRate: 22,
-      velocityRate: 18,
-      scalarRate: 14
-    });
+    state.rendered.self = predictSelfEntity(state.rendered.self, state.snapshot.self, dt);
     const smoothedPlayers = smoothEntityMap(state.rendered.players, state.snapshot.players, "token", dt, {
       positionRate: 14,
       velocityRate: 12,
